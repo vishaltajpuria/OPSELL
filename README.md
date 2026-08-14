@@ -2,7 +2,9 @@
 
 A mobile web app for browsing NSE F&O (futures & options) stocks and their live option chains, using your Zerodha account as the data source. It's built to be added to your iPhone home screen so it behaves like a regular app, no App Store needed.
 
-**Where things stand right now:** you can log in with Zerodha, browse every stock that has listed futures & options, and view a live option chain (strikes, LTP, open interest) for any expiry. The **Strategy** tab is a placeholder — that's where the AI-generated option-selling suggestions will appear once you decide what rules/style you want it to follow.
+**Where things stand right now:** you can log in with Zerodha and see the F&O scanner — every NSE stock with listed futures & options, split into **Liquid** and **Illiquid** tabs, plus an **Indices** tab for Nifty, Bank Nifty, Fin Nifty, Midcap Nifty, and Sensex. Tapping a stock opens its live option chain (strikes, LTP, open interest) for any expiry. The **Strategy** tab is a placeholder — that's where your Supertrend/SMA-based buy/sell signals will plug in once you share the rules.
+
+**How Liquid vs. Illiquid is decided:** each stock's near-month futures contract has an open interest and a today's-volume number from Zerodha. Both are ranked against every other F&O stock (as a percentile, 0–100), the two ranks are averaged into one score, and stocks scoring above the market's median go in Liquid, the rest in Illiquid. It's computed fresh from live quotes on every page load — no separate database or background job.
 
 ## 1. Get a Zerodha Kite Connect API key
 

@@ -85,6 +85,35 @@ export async function listFnoStocks(): Promise<FnoStock[]> {
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
+export type NearMonthFuture = {
+  name: string;
+  tradingsymbol: string;
+  expiry: string;
+  lotSize: number;
+};
+
+/** One row per underlying: its nearest-expiry (near-month) stock futures contract. */
+export async function getNearMonthFutures(): Promise<Map<string, NearMonthFuture>> {
+  const instruments = await getRawInstruments();
+  const byName = new Map<string, NearMonthFuture>();
+
+  for (const inst of instruments) {
+    if (inst.segment !== "NFO-FUT" || INDEX_UNDERLYINGS.has(inst.name)) continue;
+    const expiry = toIsoDate(inst.expiry);
+    const existing = byName.get(inst.name);
+    if (!existing || expiry < existing.expiry) {
+      byName.set(inst.name, {
+        name: inst.name,
+        tradingsymbol: inst.tradingsymbol,
+        expiry,
+        lotSize: inst.lot_size,
+      });
+    }
+  }
+
+  return byName;
+}
+
 export async function getOptionChainInstruments(
   symbol: string,
   expiry: string

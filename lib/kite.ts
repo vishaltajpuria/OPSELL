@@ -83,10 +83,18 @@ export async function getInstrumentsCsv(segment: string, accessToken: string): P
   return res.text();
 }
 
+export type Quote = {
+  last_price: number;
+  net_change: number;
+  oi: number;
+  volume: number;
+  ohlc: { open: number; high: number; low: number; close: number };
+};
+
 export async function getQuote(
   instruments: string[],
   accessToken: string
-): Promise<Record<string, { last_price: number; oi: number; volume: number }>> {
+): Promise<Record<string, Quote>> {
   const params = new URLSearchParams();
   for (const i of instruments) params.append("i", i);
   const res = await kiteGet(`/quote`, accessToken, params);
