@@ -1,0 +1,95 @@
+import { createHash } from "node:crypto";
+import { getAccessToken } from "@/lib/session";
+
+const BASE_URL = "https://api.kite.trade";
+const LOGIN_URL = "https://kite.zerodha.com/connect/login";
+
+function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(
+      `Missing ${name}. Set it in your environment (see README) before connecting to Zerodha.`
+    );
+  }
+  return value;
+}
+
+export function getApiKey(): string {
+  return requireEnv("KITE_API_KEY");
+}
+
+export function getApiSecret(): string {
+  return requireEnv("KITE_API_SECRET");
+}
+
+export function getLoginUrl(): string {
+  return `${LOGIN_URL}?v=3&api_key=${encodeURIComponent(getApiKey())}`;
+}
+
+export type KiteSession = { access_token: string; user_id: string };
+
+export async function generateSession(requestToken: string): Promise<KiteSession> {
+  const apiKey = getApiKey();
+  const apiSecret = getApiSecret();
+  // Per Kite Connect v3 docs: checksum = sha256(api_key + request_token + api_secret)
+  const checksum = createHash("sha256").update(apiKey + requestToken + apiSecret).digest("hex");
+  const body = new URLSearchParams({ api_key: apiKey, request_token: requestToken, checksum });
+
+  const res = await fetch(`${BASE_URL}/session/token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded", "X-Kite-Version": "3" },
+    body,
+  });
+  const json = await res.json();
+  if (json.status !== "success") {
+    throw new Error(json.message ?? "Failed to generate Zerodha session.");
+  }
+  return json.data as KiteSession;
+}
+
+export function requireAccessToken(): string {
+  const token = getAccessToken();
+  if (!token) {
+    throw new Error("Not connected to Zerodha yet.");
+  }
+  return token;
+}
+
+async function kiteGet(path: string, accessToken: string, searchParams?: URLSearchParams) {
+  const url = new URL(BASE_URL + path);
+  if (searchParams) url.search = searchParams.toString();
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `token ${getApiKey()}:${accessToken}`,
+      "X-Kite-Version": "3",
+    },
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    let message = `Kite API error (${res.status})`;
+    try {
+      const j = await res.json();
+      message = j.message ?? message;
+    } catch {
+      // response wasn't JSON (e.g. the CSV instrument dump); keep the generic message
+    }
+    throw new Error(message);
+  }
+  return res;
+}
+
+export async function getInstrumentsCsv(segment: string, accessToken: string): Promise<string> {
+  const res = await kiteGet(`/instruments/${segment}`, accessToken);
+  return res.text();
+}
+
+export async function getQuote(
+  instruments: string[],
+  accessToken: string
+): Promise<Record<string, { last_price: number; oi: number; volume: number }>> {
+  const params = new URLSearchParams();
+  for (const i of instruments) params.append("i", i);
+  const res = await kiteGet(`/quote`, accessToken, params);
+  const json = await res.json();
+  return json.data;
+}

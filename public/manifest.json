@@ -1,0 +1,13 @@
+{
+  "name": "OPSELL",
+  "short_name": "OPSELL",
+  "description": "AI-assisted option-selling strategy tool for NSE F&O stocks",
+  "start_url": "/stocks",
+  "display": "standalone",
+  "background_color": "#0b0f14",
+  "theme_color": "#0b0f14",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
