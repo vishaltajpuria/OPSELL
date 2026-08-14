@@ -1,0 +1,132 @@
+import type { Candle } from "@/lib/kite";
+
+export function toHeikinAshi(candles: Candle[]): Candle[] {
+  const ha: Candle[] = [];
+  for (let i = 0; i < candles.length; i++) {
+    const c = candles[i];
+    const haClose = (c.open + c.high + c.low + c.close) / 4;
+    const prev = ha[i - 1];
+    const haOpen = prev ? (prev.open + prev.close) / 2 : (c.open + c.close) / 2;
+    const haHigh = Math.max(c.high, haOpen, haClose);
+    const haLow = Math.min(c.low, haOpen, haClose);
+    ha.push({ date: c.date, open: haOpen, high: haHigh, low: haLow, close: haClose, volume: c.volume });
+  }
+  return ha;
+}
+
+// Wilder's smoothed ATR.
+function computeATR(candles: Candle[], period: number): number[] {
+  const trueRange = candles.map((c, i) => {
+    if (i === 0) return c.high - c.low;
+    const prevClose = candles[i - 1].close;
+    return Math.max(c.high - c.low, Math.abs(c.high - prevClose), Math.abs(c.low - prevClose));
+  });
+
+  const atr: number[] = [];
+  for (let i = 0; i < trueRange.length; i++) {
+    if (i < period - 1) {
+      atr.push(NaN);
+    } else if (i === period - 1) {
+      atr.push(trueRange.slice(0, period).reduce((a, b) => a + b, 0) / period);
+    } else {
+      atr.push((atr[i - 1] * (period - 1) + trueRange[i]) / period);
+    }
+  }
+  return atr;
+}
+
+export type SupertrendPoint = { value: number; trend: "up" | "down" };
+
+// Standard Supertrend: computed from real OHLC candles (ATR-based bands),
+// not from Heikin Ashi values — HA is treated as a visual overlay only.
+export function computeSupertrend(candles: Candle[], period: number, multiplier: number): SupertrendPoint[] {
+  const atr = computeATR(candles, period);
+  const finalUpper: number[] = [];
+  const finalLower: number[] = [];
+  const points: SupertrendPoint[] = [];
+
+  for (let i = 0; i < candles.length; i++) {
+    if (Number.isNaN(atr[i])) {
+      finalUpper.push(NaN);
+      finalLower.push(NaN);
+      points.push({ value: NaN, trend: "up" });
+      continue;
+    }
+
+    const c = candles[i];
+    const hl2 = (c.high + c.low) / 2;
+    const basicUpper = hl2 + multiplier * atr[i];
+    const basicLower = hl2 - multiplier * atr[i];
+
+    const prevUpper = finalUpper[i - 1];
+    const prevLower = finalLower[i - 1];
+    const prevClose = i > 0 ? candles[i - 1].close : c.close;
+
+    const upper =
+      i === 0 || Number.isNaN(prevUpper) || basicUpper < prevUpper || prevClose > prevUpper
+        ? basicUpper
+        : prevUpper;
+    const lower =
+      i === 0 || Number.isNaN(prevLower) || basicLower > prevLower || prevClose < prevLower
+        ? basicLower
+        : prevLower;
+
+    finalUpper.push(upper);
+    finalLower.push(lower);
+
+    let trend: "up" | "down";
+    if (i === 0) {
+      trend = c.close >= lower ? "up" : "down";
+    } else {
+      const prevTrend = points[i - 1].trend;
+      trend = prevTrend === "down" ? (c.close > upper ? "up" : "down") : c.close < lower ? "down" : "up";
+    }
+
+    points.push({ value: trend === "up" ? lower : upper, trend });
+  }
+
+  return points;
+}
+
+export function computeSMA(candles: Candle[], period: number): number[] {
+  const closes = candles.map((c) => c.close);
+  const sma: number[] = [];
+  let windowSum = 0;
+  for (let i = 0; i < closes.length; i++) {
+    windowSum += closes[i];
+    if (i >= period) windowSum -= closes[i - period];
+    sma.push(i < period - 1 ? NaN : windowSum / period);
+  }
+  return sma;
+}
+
+// Resamples 60-minute candles into session-anchored 4H bars: the first 4
+// hourly candles of each NSE trading session (9:15-13:15 IST) form one bar,
+// the remainder of the session (13:15-15:30) forms a shorter final bar —
+// matching how charting platforms bucket intraday timeframes within a single
+// session rather than using calendar-aligned 4-hour blocks.
+export function resampleTo4H(hourly: Candle[]): Candle[] {
+  const byDay = new Map<string, Candle[]>();
+  for (const c of hourly) {
+    const day = c.date.slice(0, 10);
+    const arr = byDay.get(day) ?? [];
+    arr.push(c);
+    byDay.set(day, arr);
+  }
+
+  const result: Candle[] = [];
+  for (const dayCandles of byDay.values()) {
+    for (let i = 0; i < dayCandles.length; i += 4) {
+      const chunk = dayCandles.slice(i, i + 4);
+      result.push({
+        date: chunk[0].date,
+        open: chunk[0].open,
+        high: Math.max(...chunk.map((c) => c.high)),
+        low: Math.min(...chunk.map((c) => c.low)),
+        close: chunk[chunk.length - 1].close,
+        volume: chunk.reduce((sum, c) => sum + c.volume, 0),
+      });
+    }
+  }
+  return result;
+}

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { generateSession } from "@/lib/kite";
 import { KITE_TOKEN_COOKIE, TOKEN_MAX_AGE_SECONDS } from "@/lib/session";
+import { setStoredAccessToken } from "@/lib/kv";
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
@@ -14,6 +15,14 @@ export async function GET(request: NextRequest) {
 
   try {
     const session = await generateSession(requestToken);
+    // The daily cron job has no browser cookie to authenticate with, so mirror
+    // the token to KV for it — but don't let a missing/misconfigured KV store
+    // (e.g. not provisioned yet) block the browser login flow itself.
+    try {
+      await setStoredAccessToken(session.access_token);
+    } catch {
+      // ignored — the daily routine just won't have a token to work with yet
+    }
     const response = NextResponse.redirect(new URL("/stocks", request.url));
     response.cookies.set(KITE_TOKEN_COOKIE, session.access_token, {
       httpOnly: true,

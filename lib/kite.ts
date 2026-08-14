@@ -101,3 +101,33 @@ export async function getQuote(
   const json = await res.json();
   return json.data;
 }
+
+export type Candle = {
+  date: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+};
+
+export async function getHistoricalCandles(
+  instrumentToken: number,
+  interval: string,
+  from: string,
+  to: string,
+  accessToken: string
+): Promise<Candle[]> {
+  const params = new URLSearchParams({ from, to });
+  const res = await kiteGet(`/instruments/historical/${instrumentToken}/${interval}`, accessToken, params);
+  const json = await res.json();
+  const candles = json.data.candles as [string, number, number, number, number, number][];
+  return candles.map(([date, open, high, low, close, volume]) => ({
+    date,
+    open,
+    high,
+    low,
+    close,
+    volume,
+  }));
+}
