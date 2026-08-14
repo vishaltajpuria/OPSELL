@@ -5,7 +5,7 @@ import { getStockLiquidity } from "@/lib/liquidity";
 import { getEquityToken, getIndexToken } from "@/lib/nseInstruments";
 import { INDEX_DEFS } from "@/lib/indices";
 import { resampleTo4H } from "@/lib/indicators";
-import { detectSignal } from "@/lib/strategy";
+import { detectSignals } from "@/lib/strategy";
 
 // Vercel Hobby caps function duration at 60s. With ~150-200 liquid stocks to
 // scan at Kite's 3 req/sec historical-data limit, this can get close to that
@@ -78,8 +78,9 @@ export async function GET(request: NextRequest) {
       const token = await getEquityToken(symbol);
       if (!token) return;
       const candles = await getHistoricalCandles(token, "day", fromDaily, to, accessToken);
-      const signal = detectSignal(candles);
-      if (signal) signals.push({ symbol, timeframe: "1D", ...signal });
+      for (const signal of detectSignals(candles)) {
+        signals.push({ symbol, timeframe: "1D", ...signal });
+      }
     } catch (err) {
       errors.push(`${symbol}: ${err instanceof Error ? err.message : "failed"}`);
     }
@@ -92,8 +93,9 @@ export async function GET(request: NextRequest) {
 
     try {
       const daily = await getHistoricalCandles(token, "day", fromDaily, to, accessToken);
-      const dailySignal = detectSignal(daily);
-      if (dailySignal) signals.push({ symbol: def.key, timeframe: "1D", ...dailySignal });
+      for (const signal of detectSignals(daily)) {
+        signals.push({ symbol: def.key, timeframe: "1D", ...signal });
+      }
     } catch (err) {
       errors.push(`${def.key} (1D): ${err instanceof Error ? err.message : "failed"}`);
     }
@@ -101,8 +103,9 @@ export async function GET(request: NextRequest) {
     try {
       const hourly = await getHistoricalCandles(token, "60minute", fromHourly, to, accessToken);
       const fourHour = resampleTo4H(hourly);
-      const fhSignal = detectSignal(fourHour);
-      if (fhSignal) signals.push({ symbol: def.key, timeframe: "4H", ...fhSignal });
+      for (const signal of detectSignals(fourHour)) {
+        signals.push({ symbol: def.key, timeframe: "4H", ...signal });
+      }
     } catch (err) {
       errors.push(`${def.key} (4H): ${err instanceof Error ? err.message : "failed"}`);
     }
