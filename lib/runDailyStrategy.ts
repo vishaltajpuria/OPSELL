@@ -1,6 +1,6 @@
 import { getHistoricalCandles } from "@/lib/kite";
 import { saveDailySignals, type StoredSignal } from "@/lib/kv";
-import { listFnoStocks } from "@/lib/instruments";
+import { getStockLiquidity } from "@/lib/liquidity";
 import { getEquityToken, getIndexToken } from "@/lib/nseInstruments";
 import { INDEX_DEFS } from "@/lib/indices";
 import { resampleTo4H } from "@/lib/indicators";
@@ -17,6 +17,14 @@ const HOURLY_LOOKBACK_DAYS = 380; // under Kite's 400-day cap for 60minute inter
 // parallel (rate-limited).
 const BATCH_SIZE = 3;
 const BATCH_WINDOW_MS = 1000;
+
+// Vercel Hobby hard-caps a function at 60s regardless of maxDuration. At
+// 3 req/sec, the full ~185-stock F&O universe takes ~62s for the historical
+// fetch alone — right at that limit, which is why full runs were timing out
+// before finishing (or before the indices phase even started). Capping to
+// the top N most-liquid stocks (by the same OI+volume score used for the
+// Liquid/Illiquid split) keeps the stocks phase comfortably under budget.
+const TOP_N_STOCKS_BY_LIQUIDITY = 120;
 
 async function runRateLimited<T, R>(items: T[], fn: (item: T) => Promise<R>): Promise<R[]> {
   const results: R[] = [];
@@ -58,24 +66,25 @@ export async function runDailyStrategy(accessToken: string): Promise<StrategyRun
   const signals: StoredSignal[] = [];
   const errors: string[] = [];
 
-  // Stocks: Daily timeframe, every F&O stock (liquid and illiquid alike),
-  // on the equity/spot price. (Tried near-month continuous futures instead —
+  // Stocks: Daily timeframe, top N F&O stocks by liquidity score, on the
+  // equity/spot price. (Tried near-month continuous futures instead —
   // reverted: Kite's continuous=1 data is a raw, non-back-adjusted
   // concatenation of monthly contracts, confirmed via Zerodha's own docs, so
   // it carries a real price gap at every rollover. Over a 500-day lookback
   // that's ~16 gaps compounding into a badly corrupted ATR/Supertrend.)
-  const stocks = await listFnoStocks(accessToken);
+  const rankedStocks = await getStockLiquidity(accessToken); // already sorted, most liquid first
+  const stocks = rankedStocks.slice(0, TOP_N_STOCKS_BY_LIQUIDITY);
 
   // Kite's historical-data endpoint can still be settling today's daily
   // candle for a while after close — fetch today's live quotes up front and
   // use them to correct today's bar rather than trusting the historical
   // endpoint's still-updating record for it. See lib/candleFreshness.ts.
   const liveQuotes = await batchQuote(
-    stocks.map((s) => `NSE:${s.name}`),
+    stocks.map((s) => `NSE:${s.symbol}`),
     accessToken
   );
 
-  await runRateLimited(stocks, async ({ name: symbol }) => {
+  await runRateLimited(stocks, async ({ symbol }) => {
     try {
       const token = await getEquityToken(symbol, accessToken);
       if (!token) return;
