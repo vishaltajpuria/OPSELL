@@ -37,13 +37,20 @@ export type StrategySignal = {
  *
  * Multiple rungs can fire on the same candle; all are returned. entryPrice
  * is the real (non-Heikin-Ashi) close, since that's what's actually tradeable.
+ *
+ * Supertrend and the SMAs are both computed on Heikin Ashi candles, not real
+ * OHLC. This matches how the reference TradingView chart actually plots them:
+ * when a chart's candle type is set to Heikin Ashi, TradingView's built-in
+ * Supertrend/MA scripts read the HA-transformed open/high/low/close, not the
+ * real market prices, unless a script explicitly re-requests raw data. Only
+ * entryPrice stays real, since that's the only one of these that's tradeable.
  */
 export function detectSignals(candles: Candle[]): StrategySignal[] {
   if (candles.length < MIN_CANDLES) return [];
 
-  const supertrend = computeSupertrend(candles, SUPERTREND_PERIOD, SUPERTREND_MULTIPLIER);
   const heikinAshi = toHeikinAshi(candles);
-  const smas = new Map(SMA_SEQUENCE.map((period) => [period, computeSMA(candles, period)]));
+  const supertrend = computeSupertrend(heikinAshi, SUPERTREND_PERIOD, SUPERTREND_MULTIPLIER);
+  const smas = new Map(SMA_SEQUENCE.map((period) => [period, computeSMA(heikinAshi, period)]));
 
   const i = candles.length - 1;
   const prev = i - 1;

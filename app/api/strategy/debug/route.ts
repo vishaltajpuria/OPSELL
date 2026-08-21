@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAccessToken } from "@/lib/session";
 import { getHistoricalCandles, getQuote } from "@/lib/kite";
 import { getEquityToken } from "@/lib/nseInstruments";
-import { computeSupertrend, computeSMA } from "@/lib/indicators";
+import { computeSupertrend, computeSMA, toHeikinAshi } from "@/lib/indicators";
 import { patchTodayCandle } from "@/lib/candleFreshness";
 
 // Temporary debugging aid: dumps the last N days of raw candles alongside
@@ -33,10 +33,16 @@ export async function GET(request: NextRequest) {
     const quotes = await getQuote([`NSE:${symbol}`], accessToken);
     const candles = patchTodayCandle(rawCandles, quotes[`NSE:${symbol}`]);
     const wasPatched = rawCandles[rawCandles.length - 1]?.close !== candles[candles.length - 1]?.close;
-    const supertrend = computeSupertrend(candles, 14, 1);
-    const sma20 = computeSMA(candles, 20);
-    const sma50 = computeSMA(candles, 50);
-    const sma100 = computeSMA(candles, 100);
+
+    // Supertrend and SMA are computed on Heikin Ashi candles, matching how
+    // TradingView plots them when its chart's candle type is set to Heikin
+    // Ashi (its built-in Supertrend/MA scripts read the HA-transformed OHLC
+    // in that mode, not the real market prices).
+    const heikinAshi = toHeikinAshi(candles);
+    const supertrend = computeSupertrend(heikinAshi, 14, 1);
+    const sma20 = computeSMA(heikinAshi, 20);
+    const sma50 = computeSMA(heikinAshi, 50);
+    const sma100 = computeSMA(heikinAshi, 100);
 
     // Scan the FULL series (not just the last 20 rows below) for day-over-day
     // jumps that look like an unadjusted stock split/bonus rather than normal
@@ -83,12 +89,14 @@ export async function GET(request: NextRequest) {
     const last = 20;
     const rows = candles.slice(-last).map((c, idx) => {
       const i = candles.length - last + idx;
+      const ha = heikinAshi[i];
       return {
         date: c.date,
-        open: c.open,
-        high: c.high,
-        low: c.low,
         close: c.close,
+        haOpen: ha.open,
+        haHigh: ha.high,
+        haLow: ha.low,
+        haClose: ha.close,
         supertrend: supertrend[i].value,
         trend: supertrend[i].trend,
         sma20: sma20[i],

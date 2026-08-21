@@ -37,8 +37,9 @@ function computeATR(candles: Candle[], period: number): number[] {
 
 export type SupertrendPoint = { value: number; trend: "up" | "down" };
 
-// Standard Supertrend: computed from real OHLC candles (ATR-based bands),
-// not from Heikin Ashi values — HA is treated as a visual overlay only.
+// Standard ATR-based Supertrend ratchet-band algorithm. Works on whatever
+// candle series it's given — callers decide whether that's real OHLC or a
+// Heikin Ashi transform (see lib/strategy.ts for why HA is used there).
 export function computeSupertrend(candles: Candle[], period: number, multiplier: number): SupertrendPoint[] {
   const atr = computeATR(candles, period);
   const finalUpper: number[] = [];
