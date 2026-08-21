@@ -21,7 +21,9 @@ type OptionTrade = {
   direction: "short" | "long";
   label: string;
   optionType: "PUT" | "CALL";
+  isSpread: boolean;
   strike: number;
+  longStrike: number | null;
   expiryDate: string;
   signalDate: string;
   entryDate: string;
@@ -32,6 +34,7 @@ type OptionTrade = {
   exitPremium: number | null;
   settledAtExpiry: boolean;
   underlyingExitReason: string;
+  maxLossPerShare: number | null;
   pnlPerShare: number | null;
   pnlPercent: number | null;
   holdDays: number | null;
@@ -44,6 +47,7 @@ type BacktestResponse = {
   stopLossPercent: number | null;
   directionFilter: "short" | "long" | null;
   sellOptions: boolean;
+  spreadWidthPercent: number | null;
   trades: (Trade | OptionTrade)[];
   errors: string[];
 };
@@ -105,6 +109,8 @@ function summarizeOptions(trades: OptionTrade[]) {
   const worstPnl = resolved.length ? Math.min(...resolved.map((t) => t.pnlPerShare as number)) : 0;
   const bestPnl = resolved.length ? Math.max(...resolved.map((t) => t.pnlPerShare as number)) : 0;
   const expiredCount = trades.filter((t) => t.settledAtExpiry).length;
+  const maxLosses = trades.map((t) => t.maxLossPerShare).filter((v): v is number => v !== null);
+  const avgMaxLoss = maxLosses.length ? maxLosses.reduce((a, b) => a + b, 0) / maxLosses.length : null;
   return {
     total: trades.length,
     resolved: resolved.length,
@@ -119,6 +125,7 @@ function summarizeOptions(trades: OptionTrade[]) {
     worstPnl,
     bestPnl,
     expiredCount,
+    avgMaxLoss,
   };
 }
 
@@ -176,7 +183,8 @@ function toOptionsCsv(result: BacktestResponse, trades: OptionTrade[], overall: 
     `Symbols,${result.symbolCount}`,
     `Stop loss %,${result.stopLossPercent ?? "none"}`,
     `Direction filter,${result.directionFilter ?? "both"}`,
-    "Strike distance,~3% OTM",
+    "Short leg strike distance,~3% OTM",
+    `Spread,${result.spreadWidthPercent ? `credit spread, long leg ~${3 + result.spreadWidthPercent}% OTM (${result.spreadWidthPercent}% wider than the short leg)` : "naked (uncapped downside)"}`,
     "Expiry,Near-month NSE monthly expiry",
     "Pricing,Black-Scholes, volatility estimated from the underlying's own trailing realized volatility",
     `Total trades,${overall.total}`,
@@ -192,11 +200,12 @@ function toOptionsCsv(result: BacktestResponse, trades: OptionTrade[], overall: 
     `Avg loss ₹/share,${overall.avgLossPnl.toFixed(2)}`,
     `Best trade ₹/share,${overall.bestPnl.toFixed(2)}`,
     `Worst trade ₹/share,${overall.worstPnl.toFixed(2)}`,
+    `Avg capped max loss ₹/share,${overall.avgMaxLoss === null ? "n/a (naked)" : overall.avgMaxLoss.toFixed(2)}`,
     "",
     [
-      "Symbol", "OptionType", "Strike", "ExpiryDate", "Direction", "Label", "SignalDate", "EntryDate",
+      "Symbol", "OptionType", "IsSpread", "ShortStrike", "LongStrike", "ExpiryDate", "Direction", "Label", "SignalDate", "EntryDate",
       "UnderlyingEntryPrice", "EntryPremium", "ExitDate", "UnderlyingExitPrice", "ExitPremium",
-      "SettledAtExpiry", "PnLPerShare", "PnLPercentOfPremium", "HoldDays",
+      "SettledAtExpiry", "MaxLossPerShare", "PnLPerShare", "PnLPercentOfPremium", "HoldDays",
     ].join(","),
   ];
   for (const t of trades) {
@@ -204,7 +213,9 @@ function toOptionsCsv(result: BacktestResponse, trades: OptionTrade[], overall: 
       [
         t.symbol,
         t.optionType,
+        t.isSpread ? "yes" : "no",
         t.strike.toFixed(2),
+        t.longStrike === null ? "" : t.longStrike.toFixed(2),
         t.expiryDate,
         t.direction,
         t.label,
@@ -216,6 +227,7 @@ function toOptionsCsv(result: BacktestResponse, trades: OptionTrade[], overall: 
         t.underlyingExitPrice ?? "",
         t.exitPremium === null ? "" : t.exitPremium.toFixed(4),
         t.settledAtExpiry ? "yes" : "no",
+        t.maxLossPerShare === null ? "" : t.maxLossPerShare.toFixed(4),
         t.pnlPerShare === null ? "" : t.pnlPerShare.toFixed(4),
         t.pnlPercent === null ? "" : t.pnlPercent.toFixed(2),
         t.holdDays === null ? "" : t.holdDays,
@@ -244,6 +256,7 @@ export default function BacktestRunner() {
   const [stopLossText, setStopLossText] = useState("");
   const [directionFilter, setDirectionFilter] = useState<"both" | "short" | "long">("both");
   const [sellOptions, setSellOptions] = useState(false);
+  const [spreadWidthText, setSpreadWidthText] = useState("4");
   const [status, setStatus] = useState<"idle" | "running" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<BacktestResponse | null>(null);
@@ -309,6 +322,12 @@ export default function BacktestRunner() {
       setStatus("error");
       return;
     }
+    const spreadWidthPercent = spreadWidthText.trim() === "" ? undefined : Number(spreadWidthText);
+    if (spreadWidthPercent !== undefined && (!Number.isFinite(spreadWidthPercent) || spreadWidthPercent <= 0)) {
+      setError("Spread width % must be a positive number, or leave it blank to sell naked.");
+      setStatus("error");
+      return;
+    }
     setStatus("running");
     setError(null);
     setResult(null);
@@ -321,6 +340,7 @@ export default function BacktestRunner() {
           stopLossPercent,
           directionFilter: directionFilter === "both" ? undefined : directionFilter,
           sellOptions,
+          spreadWidthPercent: sellOptions ? spreadWidthPercent : undefined,
         }),
       });
       const data = await res.json();
@@ -400,6 +420,23 @@ export default function BacktestRunner() {
           retain those for expired contracts.
         </span>
       </label>
+
+      {sellOptions && (
+        <label className="mt-3 block text-xs text-muted">
+          Spread width % (protective leg, this much further OTM than the ~3% short leg — leave blank to sell
+          naked/uncapped instead of a credit spread)
+          <input
+            type="number"
+            inputMode="decimal"
+            step="0.5"
+            min="0"
+            value={spreadWidthText}
+            onChange={(e) => setSpreadWidthText(e.target.value)}
+            placeholder="e.g. 4"
+            className="mt-1 w-full rounded-lg border border-border bg-surface2 p-3 text-sm"
+          />
+        </label>
+      )}
 
       <button
         onClick={run}
@@ -539,6 +576,7 @@ export default function BacktestRunner() {
             <p className="text-xs text-muted">
               {result.symbolCount} symbol{result.symbolCount === 1 ? "" : "s"} · {result.from} to {result.to} ·{" "}
               {result.directionFilter ? `${result.directionFilter} only` : "both directions"} ·{" "}
+              {result.spreadWidthPercent ? `credit spread (short ~3% / long ~${3 + result.spreadWidthPercent}% OTM)` : "naked (uncapped)"} ·{" "}
               {result.stopLossPercent ? `${result.stopLossPercent}% underlying stop loss` : "no underlying stop loss"}
               {result.errors.length > 0 && ` · ${result.errors.length} error(s)`}
             </p>
@@ -588,6 +626,12 @@ export default function BacktestRunner() {
                 <span className="text-accent">+₹{fmt(optionOverall.bestPnl)}</span> /{" "}
                 <span className="text-danger">₹{fmt(optionOverall.worstPnl)}</span>
               </span>
+              {optionOverall.avgMaxLoss !== null && (
+                <>
+                  <span className="text-muted">Avg capped max loss</span>
+                  <span className="text-right font-medium text-danger">₹{fmt(optionOverall.avgMaxLoss)}</span>
+                </>
+              )}
             </div>
             <p className="mt-2 text-[10px] text-muted">Per-share, one option lot's worth of shares. Not scaled by lot size.</p>
           </div>
@@ -638,9 +682,11 @@ export default function BacktestRunner() {
                   </span>
                 </div>
                 <div className="mt-1 text-[11px] text-muted">
-                  Strike {fmt(t.strike)} exp {t.expiryDate} · Sold {fmt(t.entryPremium, 2)}
+                  {t.isSpread ? `Short ${fmt(t.strike)} / Long ${fmt(t.longStrike as number)}` : `Strike ${fmt(t.strike)}`} exp{" "}
+                  {t.expiryDate} · Net credit {fmt(t.entryPremium, 2)}
                   {t.exitPremium !== null &&
-                    ` → Bought back ${fmt(t.exitPremium, 2)} (${t.settledAtExpiry ? "expiry" : t.underlyingExitReason.replace("_", " ")})`}
+                    ` → Cost to close ${fmt(t.exitPremium, 2)} (${t.settledAtExpiry ? "expiry" : t.underlyingExitReason.replace("_", " ")})`}
+                  {t.maxLossPerShare !== null && ` · Max loss ₹${fmt(t.maxLossPerShare)}`}
                   {t.holdDays !== null && ` · ${t.holdDays}d`}
                 </div>
               </li>

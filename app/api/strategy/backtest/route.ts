@@ -35,6 +35,8 @@ export async function POST(request: NextRequest) {
   const directionFilter =
     body?.directionFilter === "short" || body?.directionFilter === "long" ? body.directionFilter : undefined;
   const sellOptions = body?.sellOptions === true;
+  const spreadWidthPercent =
+    typeof body?.spreadWidthPercent === "number" && body.spreadWidthPercent > 0 ? body.spreadWidthPercent : undefined;
 
   const now = new Date();
   const to = isoDate(now);
@@ -57,7 +59,7 @@ export async function POST(request: NextRequest) {
       const stockTrades = backtestSymbol(symbol, candles, { stopLossPercent, directionFilter });
       if (!sellOptions) return stockTrades;
       return stockTrades
-        .map((t) => toOptionTrade(t, candles))
+        .map((t) => toOptionTrade(t, candles, { spreadWidthPercent }))
         .filter((t): t is OptionTrade => t !== null);
     } catch (err) {
       errors.push(`${symbol}: ${err instanceof Error ? err.message : "failed"}`);
@@ -74,6 +76,7 @@ export async function POST(request: NextRequest) {
     stopLossPercent: stopLossPercent ?? null,
     directionFilter: directionFilter ?? null,
     sellOptions,
+    spreadWidthPercent: spreadWidthPercent ?? null,
     trades,
     errors,
   });

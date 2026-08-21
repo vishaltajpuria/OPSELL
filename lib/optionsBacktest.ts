@@ -2,7 +2,7 @@ import type { Candle } from "@/lib/kite";
 import type { BacktestTrade } from "@/lib/backtest";
 import { blackScholes, realizedVolatility, lastThursdayOfMonth } from "@/lib/optionsPricing";
 
-const OTM_PERCENT = 3; // ~3% out of the money
+const OTM_PERCENT = 3; // short leg: ~3% out of the money
 const RISK_FREE_RATE = 0.065; // constant proxy, not fetched live
 const VOL_WINDOW = 20; // trading days of realized vol used as an IV proxy
 
@@ -11,20 +11,31 @@ export type OptionTrade = {
   direction: "short" | "long";
   label: string;
   optionType: "PUT" | "CALL";
-  strike: number;
+  isSpread: boolean;
+  strike: number; // the sold (short) leg's strike
+  longStrike: number | null; // the bought (protective) leg's strike, when isSpread
   expiryDate: string;
   signalDate: string;
   entryDate: string;
   underlyingEntryPrice: number;
-  entryPremium: number;
+  entryPremium: number; // net credit received: short leg premium, minus the long leg's cost if a spread
   exitDate: string | null;
   underlyingExitPrice: number | null;
-  exitPremium: number | null;
+  exitPremium: number | null; // net cost to close: short leg buy-back, minus the long leg's sale proceeds if a spread
   settledAtExpiry: boolean;
   underlyingExitReason: BacktestTrade["exitReason"];
+  maxLossPerShare: number | null; // spread width minus the credit received; null (uncapped) when not a spread
   pnlPerShare: number | null;
-  pnlPercent: number | null; // % of the premium collected, kept vs. paid back to close
+  pnlPercent: number | null; // % of the credit collected, kept vs. paid back to close
   holdDays: number | null;
+};
+
+export type OptionsBacktestOptions = {
+  // % further OTM (beyond the short leg's OTM_PERCENT) for a protective
+  // long leg, turning the naked short into a credit spread — caps both the
+  // max loss and the margin required. Omitted/0 = naked (uncapped downside,
+  // the original single-leg behavior).
+  spreadWidthPercent?: number;
 };
 
 function toDateOnly(iso: string): string {
@@ -62,18 +73,29 @@ function indexOnOrBefore(candles: Candle[], dateOnly: string): number | null {
 /**
  * Converts one underlying stock trade (from backtestSymbol) into a modeled
  * option-selling trade: a long signal sells a put, a short signal sells a
- * call, both ~OTM_PERCENT% out of the money, expiring on the near-month NSE
- * monthly expiry. Premiums are MODELED with Black-Scholes off the
- * underlying's own price and realized volatility — not real historical
- * option-chain fills, since Kite doesn't reliably retain that for expired
- * contracts going back years. Treat results as estimates.
+ * call, ~OTM_PERCENT% out of the money, expiring on the near-month NSE
+ * monthly expiry. When spreadWidthPercent is given, a protective leg is
+ * bought further OTM (short strike distance + spreadWidthPercent), turning
+ * the naked short into a credit spread — the max loss becomes the strike
+ * width minus the credit collected, instead of unbounded. Premiums are
+ * MODELED with Black-Scholes off the underlying's own price and realized
+ * volatility for both legs (same expiry, so same time-to-expiry) — not real
+ * historical option-chain fills, since Kite doesn't reliably retain that
+ * for expired contracts going back years. Treat results as estimates.
  *
  * The position is capped at expiry: if the underlying trade's own exit
- * (target/stop/Supertrend-flip) would land after that month's expiry, the
- * option is instead settled at expiry using intrinsic value only (no time
- * value left), since the contract wouldn't still exist by then.
+ * (target/stop/Supertrend-flip) would land after that month's expiry, both
+ * legs are instead settled at expiry using intrinsic value only (no time
+ * value left), since the contracts wouldn't still exist by then.
  */
-export function toOptionTrade(trade: BacktestTrade, candles: Candle[]): OptionTrade | null {
+export function toOptionTrade(
+  trade: BacktestTrade,
+  candles: Candle[],
+  options: OptionsBacktestOptions = {}
+): OptionTrade | null {
+  const spreadWidthPercent =
+    options.spreadWidthPercent && options.spreadWidthPercent > 0 ? options.spreadWidthPercent : null;
+
   const closes = candles.map((c) => c.close);
   const entryIdx = indexOnOrBefore(candles, toDateOnly(trade.entryDate));
   if (entryIdx === null) return null;
@@ -83,19 +105,29 @@ export function toOptionTrade(trade: BacktestTrade, candles: Candle[]): OptionTr
   const expiryDateOnly = toDateOnly(expiry.toISOString());
 
   const optionType: "PUT" | "CALL" = trade.direction === "long" ? "PUT" : "CALL";
-  const strike =
+  const shortStrike =
     optionType === "PUT" ? trade.entryPrice * (1 - OTM_PERCENT / 100) : trade.entryPrice * (1 + OTM_PERCENT / 100);
+  const longStrike = spreadWidthPercent
+    ? optionType === "PUT"
+      ? trade.entryPrice * (1 - (OTM_PERCENT + spreadWidthPercent) / 100)
+      : trade.entryPrice * (1 + (OTM_PERCENT + spreadWidthPercent) / 100)
+    : null;
 
   const entryVol = realizedVolatility(closes, entryIdx, VOL_WINDOW);
   const entryT = Math.max(0, (expiry.getTime() - entryDateObj.getTime()) / (365 * 24 * 60 * 60 * 1000));
-  const entryPremium = blackScholes(
+  const shortEntryPremium = blackScholes(
     optionType === "PUT" ? "put" : "call",
     trade.entryPrice,
-    strike,
+    shortStrike,
     entryT,
     RISK_FREE_RATE,
     entryVol
   );
+  const longEntryPremium =
+    longStrike !== null
+      ? blackScholes(optionType === "PUT" ? "put" : "call", trade.entryPrice, longStrike, entryT, RISK_FREE_RATE, entryVol)
+      : 0;
+  const netEntryPremium = shortEntryPremium - longEntryPremium;
 
   let optionExitDateOnly: string;
   let settledAtExpiry = false;
@@ -113,17 +145,20 @@ export function toOptionTrade(trade: BacktestTrade, candles: Candle[]): OptionTr
       direction: trade.direction,
       label: trade.label,
       optionType,
-      strike,
+      isSpread: spreadWidthPercent !== null,
+      strike: shortStrike,
+      longStrike,
       expiryDate: expiryDateOnly,
       signalDate: trade.signalDate,
       entryDate: trade.entryDate,
       underlyingEntryPrice: trade.entryPrice,
-      entryPremium,
+      entryPremium: netEntryPremium,
       exitDate: null,
       underlyingExitPrice: null,
       exitPremium: null,
       settledAtExpiry: false,
       underlyingExitReason: trade.exitReason,
+      maxLossPerShare: longStrike !== null ? Math.abs(longStrike - shortStrike) - netEntryPremium : null,
       pnlPerShare: null,
       pnlPercent: null,
       holdDays: null,
@@ -131,35 +166,58 @@ export function toOptionTrade(trade: BacktestTrade, candles: Candle[]): OptionTr
   }
 
   const exitSpot = candles[exitIdx].close;
-  let exitPremium: number;
+  let shortExitPremium: number;
+  let longExitPremium: number;
   if (settledAtExpiry) {
-    exitPremium = optionType === "PUT" ? Math.max(strike - exitSpot, 0) : Math.max(exitSpot - strike, 0);
+    shortExitPremium = optionType === "PUT" ? Math.max(shortStrike - exitSpot, 0) : Math.max(exitSpot - shortStrike, 0);
+    longExitPremium =
+      longStrike !== null
+        ? optionType === "PUT"
+          ? Math.max(longStrike - exitSpot, 0)
+          : Math.max(exitSpot - longStrike, 0)
+        : 0;
   } else {
     const exitVol = realizedVolatility(closes, exitIdx, VOL_WINDOW);
     const exitDateObj = utcFromDateOnly(toDateOnly(candles[exitIdx].date));
     const exitT = Math.max(0, (expiry.getTime() - exitDateObj.getTime()) / (365 * 24 * 60 * 60 * 1000));
-    exitPremium = blackScholes(optionType === "PUT" ? "put" : "call", exitSpot, strike, exitT, RISK_FREE_RATE, exitVol);
+    shortExitPremium = blackScholes(
+      optionType === "PUT" ? "put" : "call",
+      exitSpot,
+      shortStrike,
+      exitT,
+      RISK_FREE_RATE,
+      exitVol
+    );
+    longExitPremium =
+      longStrike !== null
+        ? blackScholes(optionType === "PUT" ? "put" : "call", exitSpot, longStrike, exitT, RISK_FREE_RATE, exitVol)
+        : 0;
   }
+  const netExitPremium = shortExitPremium - longExitPremium;
 
-  const pnlPerShare = entryPremium - exitPremium; // sold it, so profit = premium kept
-  const pnlPercent = entryPremium > 0.01 ? (pnlPerShare / entryPremium) * 100 : null;
+  const pnlPerShare = netEntryPremium - netExitPremium; // sold the spread, so profit = net credit kept
+  const pnlPercent = netEntryPremium > 0.01 ? (pnlPerShare / netEntryPremium) * 100 : null;
+  const maxLossPerShare = longStrike !== null ? Math.abs(longStrike - shortStrike) - netEntryPremium : null;
 
   return {
     symbol: trade.symbol,
     direction: trade.direction,
     label: trade.label,
     optionType,
-    strike,
+    isSpread: spreadWidthPercent !== null,
+    strike: shortStrike,
+    longStrike,
     expiryDate: expiryDateOnly,
     signalDate: trade.signalDate,
     entryDate: trade.entryDate,
     underlyingEntryPrice: trade.entryPrice,
-    entryPremium,
+    entryPremium: netEntryPremium,
     exitDate: candles[exitIdx].date,
     underlyingExitPrice: exitSpot,
-    exitPremium,
+    exitPremium: netExitPremium,
     settledAtExpiry,
     underlyingExitReason: trade.exitReason,
+    maxLossPerShare,
     pnlPerShare,
     pnlPercent,
     holdDays: exitIdx - entryIdx,

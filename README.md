@@ -82,6 +82,8 @@ The **"Model as option-selling"** checkbox turns each stock-level trade into wha
 
 Results are reported in **₹ per share, not %** — % of a small, far-OTM premium can swing to numbers like -20,000% on a single bad trade (mathematically correct — a naked option seller genuinely can lose many multiples of the tiny premium collected — but useless for averaging across trades), so ₹ terms are what's aggregated and compared. Sanity-tested against synthetic price paths before shipping: selling into a rally decays a put toward worthless (positive ₹ P&L), selling into a crash blows the same put's value up far past what was collected (a large negative ₹ P&L, correctly uncapped), and an unresolved trade correctly settles at expiry using intrinsic value.
 
+An optional **"Spread width %"** field (shown once option-selling mode is on, defaults to 4) turns the naked short into a credit spread: a second, protective leg is bought further OTM — short leg stays ~3% OTM, long leg sits at ~3%+width% OTM, both same expiry. The max loss per trade becomes capped at (strike width − net credit collected), shown per-trade and as an "Avg capped max loss" summary line, instead of the naked short's unbounded downside. Leave the field blank to go back to naked. Verified against the earlier naked-crash sanity case: the same crash that cost the naked put ₹127.89/share cost the 4%-wide spread only ₹37.81/share — exactly matching its own computed max loss, confirming the cap holds even when the underlying blows straight through both strikes.
+
 ## Notes for whoever maintains this later
 
 - Built with Next.js 14 (App Router) + TypeScript + Tailwind CSS.
