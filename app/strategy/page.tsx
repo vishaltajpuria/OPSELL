@@ -40,7 +40,13 @@ export default async function StrategyPage() {
           <p className="text-3xl">🤖</p>
           <p className="mt-3 text-sm text-muted">
             {latest
-              ? `No signals from the ${latest.date} run.`
+              ? `No signals from the last run (${new Date(latest.runAt).toLocaleString("en-IN", {
+                  timeZone: "Asia/Kolkata",
+                  day: "numeric",
+                  month: "short",
+                  hour: "numeric",
+                  minute: "2-digit",
+                })} IST).`
               : "No signals yet — the daily routine runs after market close on trading days."}
           </p>
         </div>
@@ -48,7 +54,17 @@ export default async function StrategyPage() {
 
       {!error && latest && latest.signals.length > 0 && (
         <>
-          <p className="mt-4 text-xs text-muted">As of {latest.date}</p>
+          <p className="mt-4 text-xs text-muted">
+            Last run{" "}
+            {new Date(latest.runAt).toLocaleString("en-IN", {
+              timeZone: "Asia/Kolkata",
+              day: "numeric",
+              month: "short",
+              hour: "numeric",
+              minute: "2-digit",
+            })}{" "}
+            IST
+          </p>
           <ul className="mt-2 divide-y divide-border overflow-hidden rounded-xl border border-border">
             {latest.signals.map((s, i) => (
               <li key={`${s.symbol}-${s.timeframe}-${i}`} className="bg-surface px-4 py-3.5">

@@ -24,9 +24,17 @@ export default function RunStrategyButton() {
       setStatus("idle");
       setMessage(`Done — ${data.signalCount} signal${data.signalCount === 1 ? "" : "s"} found.`);
       router.refresh();
-    } catch {
+    } catch (err) {
       setStatus("error");
-      setMessage("Failed to run the strategy — check your connection and try again.");
+      // The run can genuinely still finish on the server even if the phone's
+      // connection drops mid-wait (screen lock, app backgrounded, etc.) — so
+      // refresh regardless and let the "Last run" timestamp be the source of
+      // truth, rather than trusting this error alone.
+      const detail = err instanceof Error ? err.message : String(err);
+      setMessage(
+        `Lost connection while waiting (${detail}). Check the "Last run" time below — it may have finished anyway.`
+      );
+      router.refresh();
     }
   }
 
@@ -39,6 +47,9 @@ export default function RunStrategyButton() {
       >
         {status === "running" ? "Running… this can take up to a minute" : "Run strategy now"}
       </button>
+      {status === "running" && (
+        <p className="mt-2 text-xs text-muted">Keep this screen open and your phone unlocked until it finishes.</p>
+      )}
       {message && (
         <p className={`mt-2 text-xs ${status === "error" ? "text-danger" : "text-muted"}`}>{message}</p>
       )}

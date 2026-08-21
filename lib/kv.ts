@@ -46,10 +46,10 @@ export type StoredSignal = {
   targetSma: SmaPoint;
 };
 
-export type LatestSignals = { date: string; signals: StoredSignal[] };
+export type LatestSignals = { date: string; runAt: string; signals: StoredSignal[] };
 
 export async function saveDailySignals(dateKey: string, signals: StoredSignal[]): Promise<void> {
-  const payload: LatestSignals = { date: dateKey, signals };
+  const payload: LatestSignals = { date: dateKey, runAt: new Date().toISOString(), signals };
   const redis = getRedis();
   await redis.set(`signals:${dateKey}`, payload);
   await redis.set("signals:latest", payload);
