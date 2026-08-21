@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAccessToken } from "@/lib/session";
-import { getHistoricalCandles } from "@/lib/kite";
+import { getHistoricalCandles, type Candle } from "@/lib/kite";
 import { getEquityToken } from "@/lib/nseInstruments";
 import { backtestSymbol, type BacktestTrade } from "@/lib/backtest";
+import { toOptionTrade, type OptionTrade } from "@/lib/optionsBacktest";
 import { runRateLimited } from "@/lib/rateLimit";
 
 export const maxDuration = 60;
@@ -31,7 +32,9 @@ export async function POST(request: NextRequest) {
   }
   const stopLossPercent =
     typeof body?.stopLossPercent === "number" && body.stopLossPercent > 0 ? body.stopLossPercent : undefined;
-  const directionFilter = body?.directionFilter === "short" || body?.directionFilter === "long" ? body.directionFilter : undefined;
+  const directionFilter =
+    body?.directionFilter === "short" || body?.directionFilter === "long" ? body.directionFilter : undefined;
+  const sellOptions = body?.sellOptions === true;
 
   const now = new Date();
   const to = isoDate(now);
@@ -43,22 +46,26 @@ export async function POST(request: NextRequest) {
   // sequential loop with a fixed per-request delay — that wastes time
   // waiting even after a fast response, and at 100+ symbols risks the
   // whole run creeping past Vercel Hobby's 60s function cap).
-  const perSymbolTrades = await runRateLimited(symbols, async (symbol) => {
+  const perSymbolResults = await runRateLimited(symbols, async (symbol) => {
     try {
       const token = await getEquityToken(symbol, accessToken);
       if (!token) {
         errors.push(`${symbol}: no equity instrument token found.`);
-        return [];
+        return [] as BacktestTrade[] | OptionTrade[];
       }
-      const candles = await getHistoricalCandles(token, "day", from, to, accessToken);
-      return backtestSymbol(symbol, candles, { stopLossPercent, directionFilter });
+      const candles: Candle[] = await getHistoricalCandles(token, "day", from, to, accessToken);
+      const stockTrades = backtestSymbol(symbol, candles, { stopLossPercent, directionFilter });
+      if (!sellOptions) return stockTrades;
+      return stockTrades
+        .map((t) => toOptionTrade(t, candles))
+        .filter((t): t is OptionTrade => t !== null);
     } catch (err) {
       errors.push(`${symbol}: ${err instanceof Error ? err.message : "failed"}`);
-      return [];
+      return [] as BacktestTrade[] | OptionTrade[];
     }
   });
 
-  const trades: BacktestTrade[] = perSymbolTrades.flat();
+  const trades = perSymbolResults.flat();
 
   return NextResponse.json({
     from,
@@ -66,6 +73,7 @@ export async function POST(request: NextRequest) {
     symbolCount: symbols.length,
     stopLossPercent: stopLossPercent ?? null,
     directionFilter: directionFilter ?? null,
+    sellOptions,
     trades,
     errors,
   });

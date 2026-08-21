@@ -76,6 +76,12 @@ Since the target is a moving SMA line, not a fixed price, the simulation has to 
 
 See the doc comment on `backtestSymbol()` in `lib/backtest.ts` for the full reasoning — these are reasonable defaults, not something the strategy itself specifies, so it's easy to point back to this if a number looks off and you want a rule changed.
 
+### Modeling it as option-selling instead
+
+The **"Model as option-selling"** checkbox turns each stock-level trade into what selling an option against that same signal would have looked like: a long signal sells a ~3% out-of-the-money put, a short signal sells a ~3% OTM call, both expiring on the near-month NSE monthly expiry (rolls to next month if the signal fires after that month's expiry already passed). The option is priced with the Black-Scholes formula (`lib/optionsPricing.ts`) using volatility estimated from the underlying's own trailing 20-day realized volatility as a stand-in for implied volatility, since Kite doesn't reliably retain historical data for expired option contracts the way it does for the underlying stock — **these are modeled estimates, not real historical option prices.** If the underlying trade's own exit (target/stop/Supertrend-flip) would land after that month's expiry, the option is instead settled at expiry using intrinsic value only, matching real expiry mechanics (`lib/optionsBacktest.ts`'s `toOptionTrade()`).
+
+Results are reported in **₹ per share, not %** — % of a small, far-OTM premium can swing to numbers like -20,000% on a single bad trade (mathematically correct — a naked option seller genuinely can lose many multiples of the tiny premium collected — but useless for averaging across trades), so ₹ terms are what's aggregated and compared. Sanity-tested against synthetic price paths before shipping: selling into a rally decays a put toward worthless (positive ₹ P&L), selling into a crash blows the same put's value up far past what was collected (a large negative ₹ P&L, correctly uncapped), and an unresolved trade correctly settles at expiry using intrinsic value.
+
 ## Notes for whoever maintains this later
 
 - Built with Next.js 14 (App Router) + TypeScript + Tailwind CSS.
