@@ -68,7 +68,8 @@ Fetches run batched at Kite's 3 requests/second historical-data limit (`lib/rate
 Since the target is a moving SMA line, not a fixed price, the simulation has to make a few calls about how a trade actually plays out — worth knowing before trusting the numbers:
 - Entry is the next day's open after a signal (the signal itself is only known once that day's candle closes — entering at that same day's close would be lookahead bias).
 - A trade exits the first day price actually touches the target SMA's *current* value (checked against that day's low for a short, high for a long) — the target moves with the SMA each day, exactly as you described.
-- If the target isn't touched, the trade exits the first day Supertrend flips against the position, at that day's close — the strategy's own signal that the setup broke, used here as the stop-loss rule since the strategy itself is signal-only and doesn't define one.
+- The optional "Stop loss %" field adds a fixed price stop (checked against that day's high for a short, low for a long), checked first each day, ahead of the target — a day where both would technically trigger is conservatively treated as a stop-out. Leave it blank to skip this and rely only on the next rule.
+- If neither the stop loss nor the target is hit, the trade exits the first day Supertrend flips against the position, at that day's close — the strategy's own signal that the setup broke, used here as a second, unbounded stop-loss rule since the strategy itself is signal-only and doesn't define one.
 - Only one trade per stock at a time — a new signal while a trade is already open is ignored until that trade exits.
 - A trade neither hit nor invalidated within ~90 trading days (or still running when the data runs out) is marked "open", excluded from the win/loss rate rather than forced into either bucket.
 
