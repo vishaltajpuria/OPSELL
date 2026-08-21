@@ -31,6 +31,13 @@ export type BacktestOptions = {
   // matching the original behavior where only the target and a Supertrend
   // flip can end a trade.
   stopLossPercent?: number;
+  // Restrict signal detection to one direction — e.g. "short" to backtest
+  // only Short/Super Short setups. The other direction's signals aren't
+  // just excluded from the results, they're skipped entirely during
+  // detection, so they never occupy the one-trade-per-stock slot either
+  // (a long signal you're not taking shouldn't block a later short one).
+  // Omitted = both directions, matching the original behavior.
+  directionFilter?: "short" | "long";
 };
 
 function signalLabel(direction: "short" | "long", triggerPeriod: number): string {
@@ -77,6 +84,7 @@ function signalLabel(direction: "short" | "long", triggerPeriod: number): string
  */
 export function backtestSymbol(symbol: string, candles: Candle[], options: BacktestOptions = {}): BacktestTrade[] {
   const stopLossPercent = options.stopLossPercent && options.stopLossPercent > 0 ? options.stopLossPercent : null;
+  const directionFilter = options.directionFilter ?? null;
   if (candles.length < MIN_CANDLES) return [];
 
   const heikinAshi = toHeikinAshi(candles);
@@ -118,6 +126,7 @@ export function backtestSymbol(symbol: string, candles: Candle[], options: Backt
         direction = "long";
       }
       if (!direction) continue;
+      if (directionFilter && direction !== directionFilter) continue;
 
       const entryIndex = i + 1;
       if (entryIndex >= candles.length) {

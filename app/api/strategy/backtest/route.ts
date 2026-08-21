@@ -31,6 +31,7 @@ export async function POST(request: NextRequest) {
   }
   const stopLossPercent =
     typeof body?.stopLossPercent === "number" && body.stopLossPercent > 0 ? body.stopLossPercent : undefined;
+  const directionFilter = body?.directionFilter === "short" || body?.directionFilter === "long" ? body.directionFilter : undefined;
 
   const now = new Date();
   const to = isoDate(now);
@@ -50,7 +51,7 @@ export async function POST(request: NextRequest) {
         return [];
       }
       const candles = await getHistoricalCandles(token, "day", from, to, accessToken);
-      return backtestSymbol(symbol, candles, { stopLossPercent });
+      return backtestSymbol(symbol, candles, { stopLossPercent, directionFilter });
     } catch (err) {
       errors.push(`${symbol}: ${err instanceof Error ? err.message : "failed"}`);
       return [];
@@ -59,5 +60,13 @@ export async function POST(request: NextRequest) {
 
   const trades: BacktestTrade[] = perSymbolTrades.flat();
 
-  return NextResponse.json({ from, to, symbolCount: symbols.length, stopLossPercent: stopLossPercent ?? null, trades, errors });
+  return NextResponse.json({
+    from,
+    to,
+    symbolCount: symbols.length,
+    stopLossPercent: stopLossPercent ?? null,
+    directionFilter: directionFilter ?? null,
+    trades,
+    errors,
+  });
 }

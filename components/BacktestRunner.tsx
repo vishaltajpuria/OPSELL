@@ -21,6 +21,7 @@ type BacktestResponse = {
   to: string;
   symbolCount: number;
   stopLossPercent: number | null;
+  directionFilter: "short" | "long" | null;
   trades: Trade[];
   errors: string[];
 };
@@ -40,6 +41,7 @@ function toCsv(result: BacktestResponse, overall: ReturnType<typeof summarize>):
     `Range,${result.from} to ${result.to}`,
     `Symbols,${result.symbolCount}`,
     `Stop loss %,${result.stopLossPercent ?? "none"}`,
+    `Direction filter,${result.directionFilter ?? "both"}`,
     `Total trades,${overall.total}`,
     `Resolved,${overall.resolved}`,
     `Wins,${overall.wins}`,
@@ -127,6 +129,7 @@ function summarize(trades: Trade[]) {
 export default function BacktestRunner() {
   const [symbolsText, setSymbolsText] = useState("");
   const [stopLossText, setStopLossText] = useState("");
+  const [directionFilter, setDirectionFilter] = useState<"both" | "short" | "long">("both");
   const [status, setStatus] = useState<"idle" | "running" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<BacktestResponse | null>(null);
@@ -175,7 +178,11 @@ export default function BacktestRunner() {
       const res = await fetch("/api/strategy/backtest", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ symbols, stopLossPercent }),
+        body: JSON.stringify({
+          symbols,
+          stopLossPercent,
+          directionFilter: directionFilter === "both" ? undefined : directionFilter,
+        }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -208,6 +215,24 @@ export default function BacktestRunner() {
         className="mt-3 w-full rounded-lg border border-border bg-surface2 p-3 text-sm"
       />
 
+      <div className="mt-3">
+        <span className="block text-xs text-muted">Direction</span>
+        <div className="mt-1 flex gap-2">
+          {(["both", "short", "long"] as const).map((d) => (
+            <button
+              key={d}
+              type="button"
+              onClick={() => setDirectionFilter(d)}
+              className={`flex-1 rounded-lg border px-3 py-2 text-xs font-medium capitalize ${
+                directionFilter === d ? "border-accent bg-accent/10 text-accent" : "border-border bg-surface2 text-muted"
+              }`}
+            >
+              {d === "both" ? "All" : `${d} only`}
+            </button>
+          ))}
+        </div>
+      </div>
+
       <label className="mt-3 block text-xs text-muted">
         Stop loss % from entry (optional — leave blank to use only the Supertrend-flip exit)
         <input
@@ -237,6 +262,7 @@ export default function BacktestRunner() {
           <div className="flex items-center justify-between gap-3">
             <p className="text-xs text-muted">
               {result.symbolCount} symbol{result.symbolCount === 1 ? "" : "s"} · {result.from} to {result.to} ·{" "}
+              {result.directionFilter ? `${result.directionFilter} only` : "both directions"} ·{" "}
               {result.stopLossPercent ? `${result.stopLossPercent}% stop loss` : "no stop loss"}
               {result.errors.length > 0 && ` · ${result.errors.length} error(s)`}
             </p>
