@@ -116,9 +116,14 @@ export async function getHistoricalCandles(
   interval: string,
   from: string,
   to: string,
-  accessToken: string
+  accessToken: string,
+  continuous = false
 ): Promise<Candle[]> {
   const params = new URLSearchParams({ from, to });
+  // A single futures contract only exists for ~1 month; continuous=1 tells
+  // Kite to stitch historical data across expiries into one ongoing series
+  // for the underlying, which is required to get enough history for SMA200.
+  if (continuous) params.set("continuous", "1");
   const res = await kiteGet(`/instruments/historical/${instrumentToken}/${interval}`, accessToken, params);
   const json = await res.json();
   const candles = json.data.candles as [string, number, number, number, number, number][];

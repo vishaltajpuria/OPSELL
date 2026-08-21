@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAccessToken } from "@/lib/session";
 import { getHistoricalCandles, getQuote } from "@/lib/kite";
-import { getEquityToken } from "@/lib/nseInstruments";
+import { getNearMonthFutures } from "@/lib/instruments";
 import { computeSupertrend, computeSMA } from "@/lib/indicators";
 import { patchTodayCandle } from "@/lib/candleFreshness";
 
 // Temporary debugging aid: dumps the last N days of raw candles alongside
 // the computed Supertrend/SMA values, so results can be checked by hand
-// against a real chart. Not linked from the UI.
+// against a real chart. Not linked from the UI. Uses the same near-month
+// futures (continuous) data the actual strategy run does.
 export async function GET(request: NextRequest) {
   const accessToken = getAccessToken();
   if (!accessToken) {
@@ -20,18 +21,20 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const token = await getEquityToken(symbol, accessToken);
-    if (!token) {
-      return NextResponse.json({ error: `No equity instrument token found for ${symbol}.` }, { status: 404 });
+    const futuresMap = await getNearMonthFutures(accessToken);
+    const future = futuresMap.get(symbol);
+    if (!future) {
+      return NextResponse.json({ error: `No near-month future found for ${symbol}.` }, { status: 404 });
     }
 
     const now = new Date();
     const to = now.toISOString().slice(0, 10);
     const from = new Date(now.getTime() - 500 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
-    const rawCandles = await getHistoricalCandles(token, "day", from, to, accessToken);
-    const quotes = await getQuote([`NSE:${symbol}`], accessToken);
-    const candles = patchTodayCandle(rawCandles, quotes[`NSE:${symbol}`]);
+    const rawCandles = await getHistoricalCandles(future.instrumentToken, "day", from, to, accessToken, true);
+    const quoteKey = `NFO:${future.tradingsymbol}`;
+    const quotes = await getQuote([quoteKey], accessToken);
+    const candles = patchTodayCandle(rawCandles, quotes[quoteKey]);
     const wasPatched = rawCandles[rawCandles.length - 1]?.close !== candles[candles.length - 1]?.close;
     const supertrend = computeSupertrend(candles, 14, 1);
     const sma20 = computeSMA(candles, 20);
@@ -57,7 +60,9 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       symbol,
-      instrumentToken: token,
+      futuresTradingsymbol: future.tradingsymbol,
+      futuresExpiry: future.expiry,
+      instrumentToken: future.instrumentToken,
       totalCandlesFetched: candles.length,
       firstCandleDate: candles[0]?.date,
       lastCandleDate: candles[candles.length - 1]?.date,

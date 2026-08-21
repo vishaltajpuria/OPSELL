@@ -91,6 +91,7 @@ export async function listFnoStocks(accessToken: string = requireAccessToken()):
 export type NearMonthFuture = {
   name: string;
   tradingsymbol: string;
+  instrumentToken: number;
   expiry: string;
   lotSize: number;
 };
@@ -110,6 +111,7 @@ export async function getNearMonthFutures(
       byName.set(inst.name, {
         name: inst.name,
         tradingsymbol: inst.tradingsymbol,
+        instrumentToken: inst.instrument_token,
         expiry,
         lotSize: inst.lot_size,
       });
