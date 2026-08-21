@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { isConnected } from "@/lib/session";
 import { getLatestSignals } from "@/lib/kv";
+import RunStrategyButton from "@/components/RunStrategyButton";
 
 export const dynamic = "force-dynamic";
 
@@ -25,6 +26,10 @@ export default async function StrategyPage() {
       <p className="mt-1 text-sm text-muted">
         Supertrend(14,1) + SMA20/50/100/200 crossover — Daily for stocks, Daily &amp; 4H for indices
       </p>
+
+      <div className="mt-4">
+        <RunStrategyButton />
+      </div>
 
       {error && (
         <p className="mt-4 rounded-lg border border-danger/40 bg-danger/10 p-3 text-sm text-danger">{error}</p>
