@@ -2,7 +2,7 @@
 
 A mobile web app for browsing NSE F&O (futures & options) stocks and their live option chains, using your Zerodha account as the data source. It's built to be added to your iPhone home screen so it behaves like a regular app, no App Store needed.
 
-**Where things stand right now:** you can log in with Zerodha and see the F&O scanner — every NSE stock with listed futures & options, split into **Liquid** and **Illiquid** tabs, plus an **Indices** tab for Nifty, Bank Nifty, Fin Nifty, Midcap Nifty, and Sensex. Tapping a stock opens its live option chain (strikes, LTP, open interest) for any expiry. The **Strategy** tab shows Short/Super Short/Long/Super Long signals from a Supertrend + SMA crossover strategy, in two side-by-side Daily and 4H columns, computed automatically every trading day after market close.
+**Where things stand right now:** you can log in with Zerodha and see the F&O scanner — every NSE stock with listed futures & options, split into **Liquid** and **Illiquid** tabs, plus an **Indices** tab for Nifty, Bank Nifty, Fin Nifty, Midcap Nifty, and Sensex. Tapping a stock opens its live option chain (strikes, LTP, open interest) for any expiry. The **Strategy** tab shows Short/Super Short/Long/Super Long signals from a Supertrend + SMA crossover strategy, in two side-by-side Daily and 4H columns, computed automatically every trading day after market close. The **Positions** tab shows your currently open positions straight from Zerodha (symbol, product, quantity, average price, LTP, live P&L) — this is a read-only mirror of your actual account, not something the app tracks itself.
 
 **How Liquid vs. Illiquid is decided:** each stock's near-month futures contract has an open interest and a today's-volume number from Zerodha. Both are ranked against every other F&O stock (as a percentile, 0–100), the two ranks are averaged into one score, and stocks scoring above the market's median go in Liquid, the rest in Illiquid. It's computed fresh from live quotes on every page load — no separate database or background job.
 
@@ -57,6 +57,7 @@ It'll now open full-screen from your home screen like a normal app.
 - Zerodha access tokens expire every day (usually overnight), so you'll need to tap **Connect to Zerodha** again each trading day — ideally before 4 PM, so the daily Strategy job has a valid session to use.
 - Browse F&O stocks and tap one to see its option chain for the nearest expiry (you can switch expiries from the dropdown).
 - Check the **Strategy** tab after market close for that day's short/long signals.
+- Check the **Positions** tab anytime to see what's currently open in your Zerodha account.
 
 ## Notes for whoever maintains this later
 
