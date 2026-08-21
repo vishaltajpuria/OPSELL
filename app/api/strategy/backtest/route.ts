@@ -1,12 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAccessToken } from "@/lib/session";
 import { getHistoricalCandles, type Candle } from "@/lib/kite";
-import { getEquityToken } from "@/lib/nseInstruments";
+import { getEquityToken, getIndexToken } from "@/lib/nseInstruments";
+import { INDEX_DEFS } from "@/lib/indices";
 import { backtestSymbol, type BacktestTrade } from "@/lib/backtest";
 import { toOptionTrade, type OptionTrade } from "@/lib/optionsBacktest";
 import { runRateLimited } from "@/lib/rateLimit";
 
 export const maxDuration = 60;
+
+const INDEX_BY_KEY = new Map(INDEX_DEFS.map((d) => [d.key, d]));
 
 // ~3 years of calendar days: gives roughly 2 years of days the strategy can
 // actually fire signals on, after the ~210-trading-day SMA200/Supertrend
@@ -50,9 +53,12 @@ export async function POST(request: NextRequest) {
   // whole run creeping past Vercel Hobby's 60s function cap).
   const perSymbolResults = await runRateLimited(symbols, async (symbol) => {
     try {
-      const token = await getEquityToken(symbol, accessToken);
+      const indexDef = INDEX_BY_KEY.get(symbol);
+      const token = indexDef
+        ? await getIndexToken(indexDef.exchange, indexDef.tradingsymbol, accessToken)
+        : await getEquityToken(symbol, accessToken);
       if (!token) {
-        errors.push(`${symbol}: no equity instrument token found.`);
+        errors.push(`${symbol}: no instrument token found.`);
         return [] as BacktestTrade[] | OptionTrade[];
       }
       const candles: Candle[] = await getHistoricalCandles(token, "day", from, to, accessToken);

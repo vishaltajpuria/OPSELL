@@ -358,18 +358,19 @@ export default function BacktestRunner() {
   return (
     <div>
       <p className="mt-1 text-xs text-muted">
-        Paste NSE symbols (comma or newline separated) — e.g. the top 30 F&amp;O stocks by market cap. ~2 years
-        of daily data per symbol, walk-forward simulated against the same Supertrend + SMA logic as the Strategy
-        tab. Assumptions: entry at next day&apos;s open after a signal; exit the first day price touches the
-        (moving) target SMA, or (if a stop loss below is set) the first day price moves that % against entry, or
-        the first day Supertrend flips against the trade if neither of those hit first; trades still unresolved
-        after ~90 trading days are marked &quot;open&quot;, not counted as a win or loss.
+        Paste NSE symbols (comma or newline separated) — stocks like RELIANCE, or indices: NIFTY, BANKNIFTY,
+        FINNIFTY, MIDCPNIFTY, SENSEX. ~2 years of daily data per symbol, walk-forward simulated against the same
+        Supertrend + SMA logic as the Strategy tab. Assumptions: entry at next day&apos;s open after a signal;
+        exit the first day price touches the (moving) target SMA, or (if a stop loss below is set) the first day
+        price moves that % against entry, or the first day Supertrend flips against the trade if neither of
+        those hit first; trades still unresolved after ~90 trading days are marked &quot;open&quot;, not counted
+        as a win or loss.
       </p>
 
       <textarea
         value={symbolsText}
         onChange={(e) => setSymbolsText(e.target.value)}
-        placeholder={"RELIANCE\nHDFCBANK\nTCS\n..."}
+        placeholder={"RELIANCE\nHDFCBANK\nNIFTY\nBANKNIFTY\n..."}
         rows={5}
         className="mt-3 w-full rounded-lg border border-border bg-surface2 p-3 text-sm"
       />
@@ -415,7 +416,8 @@ export default function BacktestRunner() {
         />
         <span>
           <span className="font-medium">Model as option-selling</span> — long signal sells a ~3% OTM put, short
-          signal sells a ~3% OTM call, near-month expiry. Premium is a Black-Scholes <span className="italic">estimate</span> off
+          signal sells a ~3% OTM call, near-month <span className="italic">monthly</span> expiry only (never
+          weekly). Premium is a Black-Scholes <span className="italic">estimate</span> off
           the underlying&apos;s own realized volatility — not real historical option prices, since Kite doesn&apos;t
           retain those for expired contracts.
         </span>
