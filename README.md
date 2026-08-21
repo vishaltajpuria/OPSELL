@@ -59,6 +59,19 @@ It'll now open full-screen from your home screen like a normal app.
 - Check the **Strategy** tab after market close for that day's short/long signals.
 - Check the **Positions** tab anytime to see what's currently open in your Zerodha account.
 
+## Backtesting the strategy
+
+There's a `/backtest` page (not in the bottom nav — open it directly by URL) for checking how the strategy would have performed historically on a list of stocks you choose. Paste in symbols (e.g. today's top 30 F&O stocks by market cap — Kite's Watchlist can sort by market cap) and it fetches ~2 years of daily candles per symbol and walk-forward simulates every signal the strategy would have fired, not just the latest one.
+
+Since the target is a moving SMA line, not a fixed price, the simulation has to make a few calls about how a trade actually plays out — worth knowing before trusting the numbers:
+- Entry is the next day's open after a signal (the signal itself is only known once that day's candle closes — entering at that same day's close would be lookahead bias).
+- A trade exits the first day price actually touches the target SMA's *current* value (checked against that day's low for a short, high for a long) — the target moves with the SMA each day, exactly as you described.
+- If the target isn't touched, the trade exits the first day Supertrend flips against the position, at that day's close — the strategy's own signal that the setup broke, used here as the stop-loss rule since the strategy itself is signal-only and doesn't define one.
+- Only one trade per stock at a time — a new signal while a trade is already open is ignored until that trade exits.
+- A trade neither hit nor invalidated within ~90 trading days (or still running when the data runs out) is marked "open", excluded from the win/loss rate rather than forced into either bucket.
+
+See the doc comment on `backtestSymbol()` in `lib/backtest.ts` for the full reasoning — these are reasonable defaults, not something the strategy itself specifies, so it's easy to point back to this if a number looks off and you want a rule changed.
+
 ## Notes for whoever maintains this later
 
 - Built with Next.js 14 (App Router) + TypeScript + Tailwind CSS.

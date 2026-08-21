@@ -1,0 +1,56 @@
+import { NextRequest, NextResponse } from "next/server";
+import { getAccessToken } from "@/lib/session";
+import { getHistoricalCandles } from "@/lib/kite";
+import { getEquityToken } from "@/lib/nseInstruments";
+import { backtestSymbol, type BacktestTrade } from "@/lib/backtest";
+
+export const maxDuration = 60;
+
+// ~3 years of calendar days: gives roughly 2 years of days the strategy can
+// actually fire signals on, after the ~210-trading-day SMA200/Supertrend
+// warm-up eats into the front of the fetched range.
+const LOOKBACK_DAYS = 1100;
+
+function isoDate(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+export async function POST(request: NextRequest) {
+  const accessToken = getAccessToken();
+  if (!accessToken) {
+    return NextResponse.json({ error: "Not connected to Zerodha." }, { status: 401 });
+  }
+
+  const body = await request.json().catch(() => null);
+  const symbols: string[] = Array.isArray(body?.symbols)
+    ? Array.from(new Set(body.symbols.map((s: unknown) => String(s).trim().toUpperCase()).filter(Boolean)))
+    : [];
+  if (symbols.length === 0) {
+    return NextResponse.json({ error: "Provide a non-empty symbols array." }, { status: 400 });
+  }
+
+  const now = new Date();
+  const to = isoDate(now);
+  const from = isoDate(new Date(now.getTime() - LOOKBACK_DAYS * 24 * 60 * 60 * 1000));
+
+  const trades: BacktestTrade[] = [];
+  const errors: string[] = [];
+
+  for (const symbol of symbols) {
+    try {
+      const token = await getEquityToken(symbol, accessToken);
+      if (!token) {
+        errors.push(`${symbol}: no equity instrument token found.`);
+        continue;
+      }
+      const candles = await getHistoricalCandles(token, "day", from, to, accessToken);
+      trades.push(...backtestSymbol(symbol, candles));
+    } catch (err) {
+      errors.push(`${symbol}: ${err instanceof Error ? err.message : "failed"}`);
+    }
+    // Kite's historical-data endpoint is limited to 3 requests/second.
+    await new Promise((resolve) => setTimeout(resolve, 350));
+  }
+
+  return NextResponse.json({ from, to, symbolCount: symbols.length, trades, errors });
+}
