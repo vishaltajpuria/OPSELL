@@ -48,6 +48,13 @@ function toCsv(result: BacktestResponse, overall: ReturnType<typeof summarize>):
     `Win rate %,${overall.winRate.toFixed(2)}`,
     `Avg P&L % per trade,${overall.avgPnl.toFixed(2)}`,
     `Total P&L % (summed),${overall.totalPnl.toFixed(2)}`,
+    `Avg win %,${overall.avgWinPnl.toFixed(2)}`,
+    `Avg loss %,${overall.avgLossPnl.toFixed(2)}`,
+    `Best trade %,${overall.bestPnl.toFixed(2)}`,
+    `Worst trade %,${overall.worstPnl.toFixed(2)}`,
+    `Exits — target,${overall.exitCounts.target}`,
+    `Exits — stop loss,${overall.exitCounts.stop_loss}`,
+    `Exits — invalidated,${overall.exitCounts.invalidated}`,
     "",
     ["Symbol", "Direction", "Label", "SignalDate", "EntryDate", "EntryPrice", "ExitDate", "ExitPrice", "ExitReason", "PnLPercent", "HoldDays"].join(","),
   ];
@@ -92,6 +99,14 @@ function summarize(trades: Trade[]) {
   const losses = resolved.filter((t) => (t.pnlPercent as number) <= 0);
   const open = trades.length - resolved.length;
   const totalPnl = resolved.reduce((s, t) => s + (t.pnlPercent as number), 0);
+  const avgWinPnl = wins.length ? wins.reduce((s, t) => s + (t.pnlPercent as number), 0) / wins.length : 0;
+  const avgLossPnl = losses.length ? losses.reduce((s, t) => s + (t.pnlPercent as number), 0) / losses.length : 0;
+  const worstPnl = resolved.length ? Math.min(...resolved.map((t) => t.pnlPercent as number)) : 0;
+  const bestPnl = resolved.length ? Math.max(...resolved.map((t) => t.pnlPercent as number)) : 0;
+  const exitCounts = { target: 0, stop_loss: 0, invalidated: 0 } as Record<string, number>;
+  for (const t of trades) {
+    if (t.exitReason in exitCounts) exitCounts[t.exitReason]++;
+  }
   return {
     total: trades.length,
     resolved: resolved.length,
@@ -101,6 +116,11 @@ function summarize(trades: Trade[]) {
     winRate: resolved.length ? (wins.length / resolved.length) * 100 : 0,
     avgPnl: resolved.length ? totalPnl / resolved.length : 0,
     totalPnl,
+    avgWinPnl,
+    avgLossPnl,
+    worstPnl,
+    bestPnl,
+    exitCounts,
   };
 }
 
@@ -251,6 +271,20 @@ export default function BacktestRunner() {
               <span className={`text-right font-medium ${overall.totalPnl >= 0 ? "text-accent" : "text-danger"}`}>
                 {overall.totalPnl >= 0 ? "+" : ""}
                 {fmt(overall.totalPnl)}%
+              </span>
+              <span className="text-muted">Avg win / Avg loss</span>
+              <span className="text-right font-medium">
+                <span className="text-accent">+{fmt(overall.avgWinPnl)}%</span> /{" "}
+                <span className="text-danger">{fmt(overall.avgLossPnl)}%</span>
+              </span>
+              <span className="text-muted">Best / Worst trade</span>
+              <span className="text-right font-medium">
+                <span className="text-accent">+{fmt(overall.bestPnl)}%</span> /{" "}
+                <span className="text-danger">{fmt(overall.worstPnl)}%</span>
+              </span>
+              <span className="text-muted">Exits: target / stop / ST-flip</span>
+              <span className="text-right font-medium">
+                {overall.exitCounts.target} / {overall.exitCounts.stop_loss} / {overall.exitCounts.invalidated}
               </span>
             </div>
           </div>
