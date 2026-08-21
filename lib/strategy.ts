@@ -3,7 +3,9 @@ import { computeSupertrend, computeSMA } from "@/lib/indicators";
 
 const SUPERTREND_PERIOD = 14;
 const SUPERTREND_MULTIPLIER = 1;
-const SMA_SEQUENCE = [10, 20, 50, 100, 200] as const;
+// SMA10 is excluded as a trigger (too close to price, too noisy) — SMA20 and
+// every rung above it are valid triggers.
+const SMA_SEQUENCE = [20, 50, 100, 200] as const;
 
 // Enough trading days for SMA200 to warm up plus a safety buffer.
 const MIN_CANDLES = 210;
@@ -20,7 +22,7 @@ export type StrategySignal = {
 };
 
 /**
- * Checks every rung of the SMA ribbon (10/20/50/100/200) for a fresh
+ * Checks every rung of the SMA sequence (20/50/100/200) for a fresh
  * crossover of the Supertrend line on the most recent candle.
  *
  * SHORT — any SMA crossing from at/below to above the Supertrend line, while
@@ -30,10 +32,9 @@ export type StrategySignal = {
  * (Supertrend "down", an SMA crossing from at/above to below the line, price
  * below it).
  *
- * The target is always the *next* SMA further out in the ribbon from
- * whichever one crossed (e.g. SMA50 crosses -> target SMA100) — not the
- * nearest by value — matching how the ribbon is actually read chart-side.
- * Multiple rungs can fire on the same candle; all are returned.
+ * The target is always the *next* SMA further out in the sequence from
+ * whichever one crossed (e.g. SMA50 crosses -> target SMA100). Multiple
+ * rungs can fire on the same candle; all are returned.
  */
 export function detectSignals(candles: Candle[]): StrategySignal[] {
   if (candles.length < MIN_CANDLES) return [];
