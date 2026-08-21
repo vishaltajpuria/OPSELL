@@ -3,6 +3,10 @@
     {
       "path": "/api/cron/daily-strategy",
       "schedule": "30 10 * * 1-5"
+    },
+    {
+      "path": "/api/cron/daily-strategy-4h",
+      "schedule": "40 10 * * 1-5"
     }
   ]
 }

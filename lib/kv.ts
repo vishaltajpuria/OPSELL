@@ -48,9 +48,31 @@ export type StoredSignal = {
 
 export type LatestSignals = { date: string; runAt: string; signals: StoredSignal[] };
 
-export async function saveDailySignals(dateKey: string, signals: StoredSignal[]): Promise<void> {
-  const payload: LatestSignals = { date: dateKey, runAt: new Date().toISOString(), signals };
+/**
+ * The Daily and 4H timeframes run as separate function invocations (each
+ * needs its own Vercel Hobby 60s budget — see runDailyStrategy.ts), so
+ * saving can't just overwrite the whole day's signal list or one timeframe
+ * would wipe out the other. Instead this replaces only the entries for the
+ * given timeframe, keeping whatever the other timeframe's run already saved
+ * for today. Safe to call more than once per run too (e.g. a stocks-phase
+ * checkpoint followed by the final save) since each call fully replaces its
+ * own timeframe's slice.
+ */
+export async function saveSignalsForTimeframe(
+  dateKey: string,
+  timeframe: StoredSignal["timeframe"],
+  signals: StoredSignal[]
+): Promise<void> {
   const redis = getRedis();
+  const existing = await redis.get<LatestSignals>(`signals:${dateKey}`);
+  const keptOtherTimeframes = (existing?.date === dateKey ? existing.signals : []).filter(
+    (s) => s.timeframe !== timeframe
+  );
+  const payload: LatestSignals = {
+    date: dateKey,
+    runAt: new Date().toISOString(),
+    signals: [...keptOtherTimeframes, ...signals],
+  };
   await redis.set(`signals:${dateKey}`, payload);
   await redis.set("signals:latest", payload);
 }

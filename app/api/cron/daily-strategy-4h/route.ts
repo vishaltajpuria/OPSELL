@@ -1,12 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getStoredAccessToken } from "@/lib/kv";
-import { runDailyTimeframeStrategy } from "@/lib/runDailyStrategy";
+import { run4HTimeframeStrategy } from "@/lib/runDailyStrategy";
 
-// This is the Daily-timeframe pass only — see api/cron/daily-strategy-4h for
-// the 4H pass, run as a separate invocation so each stays under Vercel
-// Hobby's 60s hard cap (this value is only honored on paid plans).
-// runDailyTimeframeStrategy() checkpoint-saves after the stocks phase, so a
-// Hobby timeout during the (much shorter) indices phase doesn't lose the run.
+// The 4H-timeframe pass — see api/cron/daily-strategy for the Daily pass,
+// run as a separate invocation (and scheduled a few minutes apart in
+// vercel.json) so each stays under Vercel Hobby's 60s hard cap, and so the
+// two don't run concurrently against Kite's 3 req/sec historical-data limit.
 export const maxDuration = 300;
 
 function authorized(request: NextRequest): boolean {
@@ -27,6 +26,6 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const result = await runDailyTimeframeStrategy(accessToken);
+  const result = await run4HTimeframeStrategy(accessToken);
   return NextResponse.json(result);
 }
