@@ -1,12 +1,20 @@
 {
   "crons": [
     {
-      "path": "/api/cron/daily-strategy",
+      "path": "/api/cron/daily-strategy?batch=A",
       "schedule": "30 10 * * 1-5"
     },
     {
-      "path": "/api/cron/daily-strategy-4h",
+      "path": "/api/cron/daily-strategy?batch=B",
+      "schedule": "35 10 * * 1-5"
+    },
+    {
+      "path": "/api/cron/daily-strategy-4h?batch=A",
       "schedule": "40 10 * * 1-5"
+    },
+    {
+      "path": "/api/cron/daily-strategy-4h?batch=B",
+      "schedule": "45 10 * * 1-5"
     }
   ]
 }

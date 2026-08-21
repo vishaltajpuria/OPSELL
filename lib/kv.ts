@@ -48,33 +48,50 @@ export type StoredSignal = {
 
 export type LatestSignals = { date: string; runAt: string; signals: StoredSignal[] };
 
+// The full F&O stock list is split into this many slices (see
+// partitionForBatch in runDailyStrategy.ts), each running as its own
+// scheduled/manual invocation so none of them individually exceeds Vercel
+// Hobby's 60s function-duration cap.
+export const BATCH_IDS = ["A", "B"] as const;
+export type BatchId = (typeof BATCH_IDS)[number];
+
+type StoredBatchPayload = { signals: StoredSignal[]; savedAt: string };
+
+function batchKey(dateKey: string, timeframe: StoredSignal["timeframe"], batchId: BatchId): string {
+  return `signals:${dateKey}:${timeframe}:${batchId}`;
+}
+
+async function republishMerged(dateKey: string): Promise<void> {
+  const redis = getRedis();
+  const keys = (["1D", "4H"] as const).flatMap((tf) => BATCH_IDS.map((b) => batchKey(dateKey, tf, b)));
+  const batches = await Promise.all(keys.map((k) => redis.get<StoredBatchPayload>(k)));
+  const signals = batches.flatMap((b) => b?.signals ?? []);
+  const payload: LatestSignals = { date: dateKey, runAt: new Date().toISOString(), signals };
+  await redis.set(`signals:${dateKey}`, payload);
+  await redis.set("signals:latest", payload);
+}
+
 /**
- * The Daily and 4H timeframes run as separate function invocations (each
- * needs its own Vercel Hobby 60s budget — see runDailyStrategy.ts), so
- * saving can't just overwrite the whole day's signal list or one timeframe
- * would wipe out the other. Instead this replaces only the entries for the
- * given timeframe, keeping whatever the other timeframe's run already saved
- * for today. Safe to call more than once per run too (e.g. a stocks-phase
- * checkpoint followed by the final save) since each call fully replaces its
- * own timeframe's slice.
+ * Each batch/timeframe invocation writes only to its own key — never
+ * reading or rewriting another batch's or timeframe's data, so batches that
+ * run minutes apart in separate serverless invocations can't clobber each
+ * other. After writing, this republishes a merged view across every
+ * batch/timeframe key for the day, so the Strategy tab (which just reads
+ * "signals:latest") always sees the combined picture. Safe to call more
+ * than once per invocation too (e.g. a stocks-phase checkpoint followed by
+ * a final save that adds indices) since each call fully replaces its own
+ * batch's slice.
  */
-export async function saveSignalsForTimeframe(
+export async function saveSignalBatch(
   dateKey: string,
   timeframe: StoredSignal["timeframe"],
+  batchId: BatchId,
   signals: StoredSignal[]
 ): Promise<void> {
   const redis = getRedis();
-  const existing = await redis.get<LatestSignals>(`signals:${dateKey}`);
-  const keptOtherTimeframes = (existing?.date === dateKey ? existing.signals : []).filter(
-    (s) => s.timeframe !== timeframe
-  );
-  const payload: LatestSignals = {
-    date: dateKey,
-    runAt: new Date().toISOString(),
-    signals: [...keptOtherTimeframes, ...signals],
-  };
-  await redis.set(`signals:${dateKey}`, payload);
-  await redis.set("signals:latest", payload);
+  const payload: StoredBatchPayload = { signals, savedAt: new Date().toISOString() };
+  await redis.set(batchKey(dateKey, timeframe, batchId), payload);
+  await republishMerged(dateKey);
 }
 
 export async function getLatestSignals(): Promise<LatestSignals | null> {

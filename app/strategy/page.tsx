@@ -1,12 +1,21 @@
 import { redirect } from "next/navigation";
 import { isConnected } from "@/lib/session";
-import { getLatestSignals } from "@/lib/kv";
+import { getLatestSignals, type StoredSignal } from "@/lib/kv";
 import RunStrategyButton from "@/components/RunStrategyButton";
 
 export const dynamic = "force-dynamic";
 
 function fmt(n: number) {
   return n.toLocaleString("en-IN", { maximumFractionDigits: 2 });
+}
+
+// SMA20 crossing is the "regular" signal; SMA50/SMA100 crossing (the faster
+// average having already caught up to a slower one) is the stronger "super"
+// version of the same call.
+function signalLabel(s: StoredSignal): string {
+  const base = s.direction === "short" ? "Short" : "Long";
+  const isSuper = s.triggerSma.period === 50 || s.triggerSma.period === 100;
+  return isSuper ? `Super ${base}` : base;
 }
 
 export default async function StrategyPage() {
@@ -24,8 +33,7 @@ export default async function StrategyPage() {
     <main className="px-4 pt-6">
       <h1 className="text-xl font-semibold">Strategy</h1>
       <p className="mt-1 text-sm text-muted">
-        Supertrend(14,1) + SMA20/50/100/200 crossover — Daily &amp; 4H, top 120 F&amp;O stocks by liquidity plus
-        all 5 indices
+        Supertrend(14,1) + SMA20/50/100/200 crossover — Daily &amp; 4H, full F&amp;O stock list plus all 5 indices
       </p>
 
       <div className="mt-4">
@@ -67,38 +75,38 @@ export default async function StrategyPage() {
             IST
           </p>
 
-          {(["1D", "4H"] as const).map((timeframe) => {
-            const rows = latest.signals.filter((s) => s.timeframe === timeframe);
-            if (rows.length === 0) return null;
-            return (
-              <div key={timeframe} className="mt-4">
-                <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">
-                  {timeframe === "1D" ? "Daily" : "4H"} ({rows.length})
-                </h2>
-                <ul className="mt-2 divide-y divide-border overflow-hidden rounded-xl border border-border">
-                  {rows.map((s, i) => (
-                    <li key={`${s.symbol}-${s.timeframe}-${i}`} className="bg-surface px-4 py-3.5">
-                      <div className="flex items-center justify-between">
-                        <span className="font-medium">{s.symbol}</span>
-                        <span
-                          className={`text-xs font-semibold uppercase ${
+          <div className="mt-4 grid grid-cols-2 gap-3">
+            {(["1D", "4H"] as const).map((timeframe) => {
+              const rows = latest.signals.filter((s) => s.timeframe === timeframe);
+              return (
+                <div key={timeframe}>
+                  <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">
+                    {timeframe === "1D" ? "Daily" : "4H"} ({rows.length})
+                  </h2>
+                  <ul className="mt-2 space-y-2">
+                    {rows.length === 0 && <li className="text-xs text-muted">No signals</li>}
+                    {rows.map((s, i) => (
+                      <li key={`${s.symbol}-${s.timeframe}-${i}`} className="rounded-lg border border-border bg-surface p-2.5">
+                        <p className="truncate text-xs font-medium">{s.symbol}</p>
+                        <p
+                          className={`text-[10px] font-semibold uppercase ${
                             s.direction === "short" ? "text-danger" : "text-accent"
                           }`}
                         >
-                          {s.direction}
-                        </span>
-                      </div>
-                      <div className="mt-1 text-[11px] text-muted">
-                        {s.signalDate} · Entry {fmt(s.entryPrice)} · ST {fmt(s.supertrendValue)} · SMA
-                        {s.triggerSma.period} crossed the line · Target SMA{s.targetSma.period} (
-                        {fmt(s.targetSma.value)})
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            );
-          })}
+                          {signalLabel(s)}
+                        </p>
+                        <p className="mt-1 text-[11px] text-muted">
+                          Entry {fmt(s.entryPrice)}
+                          <br />
+                          Target {fmt(s.targetSma.value)}
+                        </p>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              );
+            })}
+          </div>
         </>
       )}
     </main>

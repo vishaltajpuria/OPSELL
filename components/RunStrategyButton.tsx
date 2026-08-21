@@ -3,7 +3,19 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
-type Status = "idle" | "running-daily" | "running-4h" | "error";
+// Covers the full F&O list: 2 batches (A/B) x 2 timeframes (Daily/4H), run
+// sequentially as separate requests rather than one big call, since each
+// needs its own Vercel Hobby 60s budget and they share Kite's 3 req/sec
+// historical-data limit (running them in parallel would just hit rate
+// limits, not finish any faster).
+const STAGES = [
+  { label: "Daily (1 of 4)", url: "/api/strategy/run?batch=A" },
+  { label: "Daily (2 of 4)", url: "/api/strategy/run?batch=B" },
+  { label: "4H (3 of 4)", url: "/api/strategy/run-4h?batch=A" },
+  { label: "4H (4 of 4)", url: "/api/strategy/run-4h?batch=B" },
+] as const;
+
+type Status = "idle" | "running" | "error";
 
 async function runOne(url: string): Promise<{ signalCount: number }> {
   const res = await fetch(url, { method: "POST" });
@@ -17,24 +29,22 @@ async function runOne(url: string): Promise<{ signalCount: number }> {
 export default function RunStrategyButton() {
   const router = useRouter();
   const [status, setStatus] = useState<Status>("idle");
+  const [stageIndex, setStageIndex] = useState(0);
   const [message, setMessage] = useState<string | null>(null);
 
   async function run() {
     setMessage(null);
+    setStatus("running");
+    let totalSignals = 0;
     try {
-      // Run sequentially, not in parallel: both hit Kite's shared 3 req/sec
-      // historical-data limit, so running them at once would just cause
-      // rate-limit errors instead of finishing any faster.
-      setStatus("running-daily");
-      const daily = await runOne("/api/strategy/run");
-      router.refresh();
-
-      setStatus("running-4h");
-      const fourHour = await runOne("/api/strategy/run-4h");
-      router.refresh();
-
+      for (let i = 0; i < STAGES.length; i++) {
+        setStageIndex(i);
+        const result = await runOne(STAGES[i].url);
+        totalSignals += result.signalCount;
+        router.refresh();
+      }
       setStatus("idle");
-      setMessage(`Done — ${daily.signalCount} Daily signal${daily.signalCount === 1 ? "" : "s"}, ${fourHour.signalCount} 4H signal${fourHour.signalCount === 1 ? "" : "s"}.`);
+      setMessage(`Done — ${totalSignals} signal${totalSignals === 1 ? "" : "s"} found across Daily + 4H.`);
     } catch (err) {
       setStatus("error");
       // A run can genuinely still finish on the server even if the phone's
@@ -43,13 +53,13 @@ export default function RunStrategyButton() {
       // truth, rather than trusting this error alone.
       const detail = err instanceof Error ? err.message : String(err);
       setMessage(
-        `Lost connection while waiting (${detail}). Check the "Last run" times below — they may have finished anyway.`
+        `Lost connection while waiting (${detail}). Check the "Last run" time below — some batches may have finished anyway.`
       );
       router.refresh();
     }
   }
 
-  const running = status === "running-daily" || status === "running-4h";
+  const running = status === "running";
 
   return (
     <div className="mb-4">
@@ -58,14 +68,12 @@ export default function RunStrategyButton() {
         disabled={running}
         className="w-full rounded-xl bg-accent px-4 py-3 text-center text-sm font-medium text-black disabled:opacity-60"
       >
-        {status === "running-daily" && "Running Daily… (1 of 2)"}
-        {status === "running-4h" && "Running 4H… (2 of 2)"}
-        {!running && "Run strategy now"}
+        {running ? `Running… ${STAGES[stageIndex].label}` : "Run strategy now"}
       </button>
       {running && (
         <p className="mt-2 text-xs text-muted">
-          Keep this screen open and your phone unlocked until it finishes — this runs two passes and can take a
-          few minutes total.
+          Covers the full F&amp;O list in 4 stages and can take a few minutes total — keep this screen open and
+          your phone unlocked.
         </p>
       )}
       {message && (
