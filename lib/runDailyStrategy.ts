@@ -5,6 +5,8 @@ import { getEquityToken, getIndexToken } from "@/lib/nseInstruments";
 import { INDEX_DEFS } from "@/lib/indices";
 import { resampleTo4H } from "@/lib/indicators";
 import { detectSignals } from "@/lib/strategy";
+import { batchQuote } from "@/lib/quoteBatch";
+import { patchTodayCandle } from "@/lib/candleFreshness";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DAILY_LOOKBACK_DAYS = 500; // comfortably covers SMA200 warm-up + buffer
@@ -59,11 +61,22 @@ export async function runDailyStrategy(accessToken: string): Promise<StrategyRun
   // Stocks: Daily timeframe, every F&O stock (liquid and illiquid alike).
   const stocks = await listFnoStocks(accessToken);
 
+  // Kite's historical-data endpoint can still be settling today's daily
+  // candle for a while after close (confirmed off by several points from
+  // the live price on real data) — fetch today's live quotes up front and
+  // use them to correct today's bar rather than trusting the historical
+  // endpoint's still-updating record for it. See lib/candleFreshness.ts.
+  const liveQuotes = await batchQuote(
+    stocks.map((s) => `NSE:${s.name}`),
+    accessToken
+  );
+
   await runRateLimited(stocks, async ({ name: symbol }) => {
     try {
       const token = await getEquityToken(symbol, accessToken);
       if (!token) return;
-      const candles = await getHistoricalCandles(token, "day", fromDaily, to, accessToken);
+      const rawCandles = await getHistoricalCandles(token, "day", fromDaily, to, accessToken);
+      const candles = patchTodayCandle(rawCandles, liveQuotes[`NSE:${symbol}`]);
       for (const signal of detectSignals(candles)) {
         signals.push({ symbol, timeframe: "1D", ...signal });
       }
@@ -77,12 +90,18 @@ export async function runDailyStrategy(accessToken: string): Promise<StrategyRun
   await saveDailySignals(to, signals);
 
   // Indices: Daily + 4H (resampled from 60-minute candles).
+  const indexLiveQuotes = await batchQuote(
+    INDEX_DEFS.map((d) => `${d.exchange}:${d.tradingsymbol}`),
+    accessToken
+  );
+
   await runRateLimited(INDEX_DEFS, async (def) => {
     const token = await getIndexToken(def.exchange, def.tradingsymbol, accessToken);
     if (!token) return;
 
     try {
-      const daily = await getHistoricalCandles(token, "day", fromDaily, to, accessToken);
+      const rawDaily = await getHistoricalCandles(token, "day", fromDaily, to, accessToken);
+      const daily = patchTodayCandle(rawDaily, indexLiveQuotes[`${def.exchange}:${def.tradingsymbol}`]);
       for (const signal of detectSignals(daily)) {
         signals.push({ symbol: def.key, timeframe: "1D", ...signal });
       }

@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAccessToken } from "@/lib/session";
-import { getHistoricalCandles } from "@/lib/kite";
+import { getHistoricalCandles, getQuote } from "@/lib/kite";
 import { getEquityToken } from "@/lib/nseInstruments";
 import { computeSupertrend, computeSMA } from "@/lib/indicators";
+import { patchTodayCandle } from "@/lib/candleFreshness";
 
 // Temporary debugging aid: dumps the last N days of raw candles alongside
 // the computed Supertrend/SMA values, so results can be checked by hand
@@ -28,7 +29,10 @@ export async function GET(request: NextRequest) {
     const to = now.toISOString().slice(0, 10);
     const from = new Date(now.getTime() - 500 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
-    const candles = await getHistoricalCandles(token, "day", from, to, accessToken);
+    const rawCandles = await getHistoricalCandles(token, "day", from, to, accessToken);
+    const quotes = await getQuote([`NSE:${symbol}`], accessToken);
+    const candles = patchTodayCandle(rawCandles, quotes[`NSE:${symbol}`]);
+    const wasPatched = rawCandles[rawCandles.length - 1]?.close !== candles[candles.length - 1]?.close;
     const supertrend = computeSupertrend(candles, 14, 1);
     const sma20 = computeSMA(candles, 20);
     const sma50 = computeSMA(candles, 50);
@@ -57,6 +61,9 @@ export async function GET(request: NextRequest) {
       totalCandlesFetched: candles.length,
       firstCandleDate: candles[0]?.date,
       lastCandleDate: candles[candles.length - 1]?.date,
+      todayCandlePatchedFromLiveQuote: wasPatched,
+      rawLastCandleCloseFromHistoricalApi: rawCandles[rawCandles.length - 1]?.close,
+      patchedLastCandleClose: candles[candles.length - 1]?.close,
       last20: rows,
     });
   } catch (err) {

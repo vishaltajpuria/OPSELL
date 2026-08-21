@@ -1,5 +1,6 @@
-import { getQuote, requireAccessToken, type Quote } from "@/lib/kite";
+import { requireAccessToken } from "@/lib/kite";
 import { listFnoStocks, getNearMonthFutures } from "@/lib/instruments";
+import { batchQuote } from "@/lib/quoteBatch";
 
 export type StockLiquidity = {
   symbol: string;
@@ -13,20 +14,6 @@ export type StockLiquidity = {
   liquidityScore: number | null; // 0-100, percentile blend of OI + volume; null if no futures data
   bucket: "liquid" | "illiquid";
 };
-
-// Kite's quote endpoint accepts many instruments per call, but we chunk
-// defensively rather than assume an exact undocumented cap.
-const QUOTE_CHUNK_SIZE = 400;
-
-async function batchQuote(keys: string[], accessToken: string): Promise<Record<string, Quote>> {
-  if (keys.length === 0) return {};
-  const chunks: string[][] = [];
-  for (let i = 0; i < keys.length; i += QUOTE_CHUNK_SIZE) {
-    chunks.push(keys.slice(i, i + QUOTE_CHUNK_SIZE));
-  }
-  const results = await Promise.all(chunks.map((chunk) => getQuote(chunk, accessToken)));
-  return Object.assign({}, ...results);
-}
 
 // Percentile rank (0-100) of each value within the set: what fraction of the
 // set this value is greater than or equal to.
