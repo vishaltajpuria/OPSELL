@@ -3,6 +3,7 @@ import { getAccessToken } from "@/lib/session";
 import { getHistoricalCandles } from "@/lib/kite";
 import { getEquityToken } from "@/lib/nseInstruments";
 import { backtestSymbol, type BacktestTrade } from "@/lib/backtest";
+import { runRateLimited } from "@/lib/rateLimit";
 
 export const maxDuration = 60;
 
@@ -33,24 +34,28 @@ export async function POST(request: NextRequest) {
   const to = isoDate(now);
   const from = isoDate(new Date(now.getTime() - LOOKBACK_DAYS * 24 * 60 * 60 * 1000));
 
-  const trades: BacktestTrade[] = [];
   const errors: string[] = [];
 
-  for (const symbol of symbols) {
+  // Batched at Kite's 3 req/sec historical-data limit (not a plain
+  // sequential loop with a fixed per-request delay — that wastes time
+  // waiting even after a fast response, and at 100+ symbols risks the
+  // whole run creeping past Vercel Hobby's 60s function cap).
+  const perSymbolTrades = await runRateLimited(symbols, async (symbol) => {
     try {
       const token = await getEquityToken(symbol, accessToken);
       if (!token) {
         errors.push(`${symbol}: no equity instrument token found.`);
-        continue;
+        return [];
       }
       const candles = await getHistoricalCandles(token, "day", from, to, accessToken);
-      trades.push(...backtestSymbol(symbol, candles));
+      return backtestSymbol(symbol, candles);
     } catch (err) {
       errors.push(`${symbol}: ${err instanceof Error ? err.message : "failed"}`);
+      return [];
     }
-    // Kite's historical-data endpoint is limited to 3 requests/second.
-    await new Promise((resolve) => setTimeout(resolve, 350));
-  }
+  });
+
+  const trades: BacktestTrade[] = perSymbolTrades.flat();
 
   return NextResponse.json({ from, to, symbolCount: symbols.length, trades, errors });
 }

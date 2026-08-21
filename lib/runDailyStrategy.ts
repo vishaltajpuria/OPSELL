@@ -7,31 +7,11 @@ import { resampleTo4H } from "@/lib/indicators";
 import { detectSignals } from "@/lib/strategy";
 import { batchQuote } from "@/lib/quoteBatch";
 import { patchTodayCandle } from "@/lib/candleFreshness";
+import { runRateLimited } from "@/lib/rateLimit";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DAILY_LOOKBACK_DAYS = 500; // comfortably covers SMA200 warm-up + buffer
 const HOURLY_LOOKBACK_DAYS = 380; // under Kite's 400-day cap for 60minute interval
-
-// Kite's historical-data endpoint is limited to 3 requests/second; run in
-// small concurrent batches rather than either serial (slow) or unbounded
-// parallel (rate-limited).
-const BATCH_SIZE = 3;
-const BATCH_WINDOW_MS = 1000;
-
-async function runRateLimited<T, R>(items: T[], fn: (item: T) => Promise<R>): Promise<R[]> {
-  const results: R[] = [];
-  for (let i = 0; i < items.length; i += BATCH_SIZE) {
-    const batch = items.slice(i, i + BATCH_SIZE);
-    const started = Date.now();
-    const batchResults = await Promise.all(batch.map(fn));
-    results.push(...batchResults);
-    const elapsed = Date.now() - started;
-    if (i + BATCH_SIZE < items.length && elapsed < BATCH_WINDOW_MS) {
-      await new Promise((resolve) => setTimeout(resolve, BATCH_WINDOW_MS - elapsed));
-    }
-  }
-  return results;
-}
 
 function isoDate(d: Date): string {
   return d.toISOString().slice(0, 10);

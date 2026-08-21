@@ -122,6 +122,8 @@ export default function BacktestRunner() {
       .sort((a, b) => b.totalPnl - a.totalPnl);
   }, [result]);
 
+  const MAX_SYMBOLS = 150; // ~50s at Kite's 3 req/sec — keeps a single run under Vercel's 60s cap
+
   async function run() {
     const symbols = symbolsText
       .split(/[\n,]+/)
@@ -129,6 +131,11 @@ export default function BacktestRunner() {
       .filter(Boolean);
     if (symbols.length === 0) {
       setError("Paste at least one symbol first.");
+      setStatus("error");
+      return;
+    }
+    if (symbols.length > MAX_SYMBOLS) {
+      setError(`That's ${symbols.length} symbols — please run ${MAX_SYMBOLS} or fewer at a time (split into two runs), or the whole thing risks timing out.`);
       setStatus("error");
       return;
     }

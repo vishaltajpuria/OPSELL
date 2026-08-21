@@ -61,7 +61,9 @@ It'll now open full-screen from your home screen like a normal app.
 
 ## Backtesting the strategy
 
-There's a `/backtest` page (not in the bottom nav — open it directly by URL) for checking how the strategy would have performed historically on a list of stocks you choose. Paste in symbols (e.g. today's top 30 F&O stocks by market cap — Kite's Watchlist can sort by market cap) and it fetches ~2 years of daily candles per symbol and walk-forward simulates every signal the strategy would have fired, not just the latest one.
+There's a `/backtest` page (not in the bottom nav — open it directly by URL) for checking how the strategy would have performed historically on any list of stocks you choose, 1 to ~150 at a time (a soft limit — see below). Paste in symbols (e.g. today's top stocks by market cap — Kite's Watchlist can sort by market cap) and it fetches ~2 years of daily candles per symbol and walk-forward simulates every signal the strategy would have fired, not just the latest one. Results include a Download CSV button (summary stats + the full trade list).
+
+Fetches run batched at Kite's 3 requests/second historical-data limit (`lib/rateLimit.ts`, shared with the daily/4H strategy run) rather than one at a time, so e.g. 100 symbols takes roughly 35 seconds, not 100+. The 150-symbol soft cap in `components/BacktestRunner.tsx` exists because Vercel Hobby hard-caps a function at 60 seconds — past ~150-170 symbols in one run, that budget gets tight; split a bigger list into two runs instead.
 
 Since the target is a moving SMA line, not a fixed price, the simulation has to make a few calls about how a trade actually plays out — worth knowing before trusting the numbers:
 - Entry is the next day's open after a signal (the signal itself is only known once that day's candle closes — entering at that same day's close would be lookahead bias).
