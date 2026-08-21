@@ -2,9 +2,9 @@ import { NextResponse } from "next/server";
 import { getAccessToken } from "@/lib/session";
 import { runDailyStrategy } from "@/lib/runDailyStrategy";
 
-// Same real-world duration as the cron job (~40s for the current stock
-// universe) — see the cron route for the Hobby-plan 60s ceiling note.
-export const maxDuration = 60;
+// Same duration profile as the cron job — see its route for the Hobby-plan
+// 60s ceiling note.
+export const maxDuration = 300;
 
 export async function POST() {
   const accessToken = getAccessToken();

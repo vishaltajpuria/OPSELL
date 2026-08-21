@@ -1,6 +1,6 @@
 import { getHistoricalCandles } from "@/lib/kite";
 import { saveDailySignals, type StoredSignal } from "@/lib/kv";
-import { getStockLiquidity } from "@/lib/liquidity";
+import { listFnoStocks } from "@/lib/instruments";
 import { getEquityToken, getIndexToken } from "@/lib/nseInstruments";
 import { INDEX_DEFS } from "@/lib/indices";
 import { resampleTo4H } from "@/lib/indicators";
@@ -56,11 +56,10 @@ export async function runDailyStrategy(accessToken: string): Promise<StrategyRun
   const signals: StoredSignal[] = [];
   const errors: string[] = [];
 
-  // Stocks: Daily timeframe, restricted to today's Liquid bucket.
-  const liquidity = await getStockLiquidity(accessToken);
-  const liquidSymbols = liquidity.filter((s) => s.bucket === "liquid").map((s) => s.symbol);
+  // Stocks: Daily timeframe, every F&O stock (liquid and illiquid alike).
+  const stocks = await listFnoStocks(accessToken);
 
-  await runRateLimited(liquidSymbols, async (symbol) => {
+  await runRateLimited(stocks, async ({ name: symbol }) => {
     try {
       const token = await getEquityToken(symbol, accessToken);
       if (!token) return;
@@ -72,6 +71,10 @@ export async function runDailyStrategy(accessToken: string): Promise<StrategyRun
       errors.push(`${symbol}: ${err instanceof Error ? err.message : "failed"}`);
     }
   });
+
+  // Checkpoint save: if the indices phase below gets cut off by a function
+  // timeout, the (much larger, slower) stocks phase isn't lost with it.
+  await saveDailySignals(to, signals);
 
   // Indices: Daily + 4H (resampled from 60-minute candles).
   await runRateLimited(INDEX_DEFS, async (def) => {

@@ -2,12 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { getStoredAccessToken } from "@/lib/kv";
 import { runDailyStrategy } from "@/lib/runDailyStrategy";
 
-// Vercel Hobby caps function duration at 60s. With ~150-200 liquid stocks to
-// scan at Kite's 3 req/sec historical-data limit, this can get close to that
-// ceiling — if it starts timing out as the liquid list grows, this needs
-// either a Pro plan (higher maxDuration) or splitting the run across two
-// invocations.
-export const maxDuration = 60;
+// Scanning every F&O stock (not just the Liquid bucket) at Kite's 3 req/sec
+// historical-data limit takes a while. Vercel Hobby hard-caps function
+// duration at 60s regardless of this value; Pro allows up to this figure.
+// runDailyStrategy() checkpoint-saves after the stocks phase, so a Hobby
+// timeout during the (much shorter) indices phase doesn't lose the run.
+export const maxDuration = 300;
 
 function authorized(request: NextRequest): boolean {
   const secret = process.env.CRON_SECRET;

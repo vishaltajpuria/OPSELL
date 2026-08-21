@@ -45,7 +45,7 @@ export default function RunStrategyButton() {
         disabled={status === "running"}
         className="w-full rounded-xl bg-accent px-4 py-3 text-center text-sm font-medium text-black disabled:opacity-60"
       >
-        {status === "running" ? "Running… this can take up to a minute" : "Run strategy now"}
+        {status === "running" ? "Running… this can take a couple of minutes" : "Run strategy now"}
       </button>
       {status === "running" && (
         <p className="mt-2 text-xs text-muted">Keep this screen open and your phone unlocked until it finishes.</p>
