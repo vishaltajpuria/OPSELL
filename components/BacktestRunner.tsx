@@ -11,7 +11,7 @@ type Trade = {
   entryPrice: number;
   exitDate: string | null;
   exitPrice: number | null;
-  exitReason: "target" | "invalidated" | "open" | "no_next_candle";
+  exitReason: "target" | "stop_loss" | "invalidated" | "open" | "no_next_candle";
   pnlPercent: number | null;
   holdDays: number | null;
 };
@@ -20,6 +20,7 @@ type BacktestResponse = {
   from: string;
   to: string;
   symbolCount: number;
+  stopLossPercent: number | null;
   trades: Trade[];
   errors: string[];
 };
@@ -38,6 +39,7 @@ function toCsv(result: BacktestResponse, overall: ReturnType<typeof summarize>):
     "OPSELL Backtest",
     `Range,${result.from} to ${result.to}`,
     `Symbols,${result.symbolCount}`,
+    `Stop loss %,${result.stopLossPercent ?? "none"}`,
     `Total trades,${overall.total}`,
     `Resolved,${overall.resolved}`,
     `Wins,${overall.wins}`,
@@ -104,6 +106,7 @@ function summarize(trades: Trade[]) {
 
 export default function BacktestRunner() {
   const [symbolsText, setSymbolsText] = useState("");
+  const [stopLossText, setStopLossText] = useState("");
   const [status, setStatus] = useState<"idle" | "running" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<BacktestResponse | null>(null);
@@ -139,6 +142,12 @@ export default function BacktestRunner() {
       setStatus("error");
       return;
     }
+    const stopLossPercent = stopLossText.trim() === "" ? undefined : Number(stopLossText);
+    if (stopLossPercent !== undefined && (!Number.isFinite(stopLossPercent) || stopLossPercent <= 0)) {
+      setError("Stop loss % must be a positive number, or leave it blank for none.");
+      setStatus("error");
+      return;
+    }
     setStatus("running");
     setError(null);
     setResult(null);
@@ -146,7 +155,7 @@ export default function BacktestRunner() {
       const res = await fetch("/api/strategy/backtest", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ symbols }),
+        body: JSON.stringify({ symbols, stopLossPercent }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -166,9 +175,9 @@ export default function BacktestRunner() {
         Paste NSE symbols (comma or newline separated) — e.g. the top 30 F&amp;O stocks by market cap. ~2 years
         of daily data per symbol, walk-forward simulated against the same Supertrend + SMA logic as the Strategy
         tab. Assumptions: entry at next day&apos;s open after a signal; exit the first day price touches the
-        (moving) target SMA, or the first day Supertrend flips against the trade if the target isn&apos;t hit
-        first; trades still unresolved after ~90 trading days are marked &quot;open&quot;, not counted as a
-        win or loss.
+        (moving) target SMA, or (if a stop loss below is set) the first day price moves that % against entry, or
+        the first day Supertrend flips against the trade if neither of those hit first; trades still unresolved
+        after ~90 trading days are marked &quot;open&quot;, not counted as a win or loss.
       </p>
 
       <textarea
@@ -178,6 +187,20 @@ export default function BacktestRunner() {
         rows={5}
         className="mt-3 w-full rounded-lg border border-border bg-surface2 p-3 text-sm"
       />
+
+      <label className="mt-3 block text-xs text-muted">
+        Stop loss % from entry (optional — leave blank to use only the Supertrend-flip exit)
+        <input
+          type="number"
+          inputMode="decimal"
+          step="0.1"
+          min="0"
+          value={stopLossText}
+          onChange={(e) => setStopLossText(e.target.value)}
+          placeholder="e.g. 3"
+          className="mt-1 w-full rounded-lg border border-border bg-surface2 p-3 text-sm"
+        />
+      </label>
 
       <button
         onClick={run}
@@ -193,7 +216,8 @@ export default function BacktestRunner() {
         <div className="mt-5">
           <div className="flex items-center justify-between gap-3">
             <p className="text-xs text-muted">
-              {result.symbolCount} symbol{result.symbolCount === 1 ? "" : "s"} · {result.from} to {result.to}
+              {result.symbolCount} symbol{result.symbolCount === 1 ? "" : "s"} · {result.from} to {result.to} ·{" "}
+              {result.stopLossPercent ? `${result.stopLossPercent}% stop loss` : "no stop loss"}
               {result.errors.length > 0 && ` · ${result.errors.length} error(s)`}
             </p>
             <button
@@ -279,7 +303,8 @@ export default function BacktestRunner() {
                 </div>
                 <div className="mt-1 text-[11px] text-muted">
                   Entry {t.entryDate} @ {fmt(t.entryPrice)}
-                  {t.exitDate && ` · Exit ${t.exitDate} @ ${fmt(t.exitPrice as number)} (${t.exitReason})`}
+                  {t.exitDate &&
+                    ` · Exit ${t.exitDate} @ ${fmt(t.exitPrice as number)} (${t.exitReason.replace("_", " ")})`}
                   {t.holdDays !== null && ` · ${t.holdDays}d`}
                 </div>
               </li>

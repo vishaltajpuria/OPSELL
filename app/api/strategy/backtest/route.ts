@@ -29,6 +29,8 @@ export async function POST(request: NextRequest) {
   if (symbols.length === 0) {
     return NextResponse.json({ error: "Provide a non-empty symbols array." }, { status: 400 });
   }
+  const stopLossPercent =
+    typeof body?.stopLossPercent === "number" && body.stopLossPercent > 0 ? body.stopLossPercent : undefined;
 
   const now = new Date();
   const to = isoDate(now);
@@ -48,7 +50,7 @@ export async function POST(request: NextRequest) {
         return [];
       }
       const candles = await getHistoricalCandles(token, "day", from, to, accessToken);
-      return backtestSymbol(symbol, candles);
+      return backtestSymbol(symbol, candles, { stopLossPercent });
     } catch (err) {
       errors.push(`${symbol}: ${err instanceof Error ? err.message : "failed"}`);
       return [];
@@ -57,5 +59,5 @@ export async function POST(request: NextRequest) {
 
   const trades: BacktestTrade[] = perSymbolTrades.flat();
 
-  return NextResponse.json({ from, to, symbolCount: symbols.length, trades, errors });
+  return NextResponse.json({ from, to, symbolCount: symbols.length, stopLossPercent: stopLossPercent ?? null, trades, errors });
 }

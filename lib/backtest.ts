@@ -20,9 +20,17 @@ export type BacktestTrade = {
   entryPrice: number;
   exitDate: string | null;
   exitPrice: number | null;
-  exitReason: "target" | "invalidated" | "open" | "no_next_candle";
+  exitReason: "target" | "stop_loss" | "invalidated" | "open" | "no_next_candle";
   pnlPercent: number | null;
   holdDays: number | null;
+};
+
+export type BacktestOptions = {
+  // Fixed % move against the entry price that closes the trade regardless
+  // of target/Supertrend state — e.g. 3 for a 3% stop. Omitted/0 = no stop,
+  // matching the original behavior where only the target and a Supertrend
+  // flip can end a trade.
+  stopLossPercent?: number;
 };
 
 function signalLabel(direction: "short" | "long", triggerPeriod: number): string {
@@ -51,17 +59,24 @@ function signalLabel(direction: "short" | "long", triggerPeriod: number): string
  *    forward, not a level frozen at entry — it moves as the SMA does. A
  *    trade exits the first day the target is actually touched (checked
  *    against that day's low for a short, high for a long).
- *  - If the target isn't touched, the trade is invalidated (and closed at
- *    that day's close) the first day Supertrend flips against the position
- *    — that's the strategy's own signal that the setup has broken, so it
- *    doubles as the stop-loss rule here.
+ *  - If a stopLossPercent is given, a fixed price stop is checked FIRST each
+ *    day (against that day's high for a short, low for a long) — since a
+ *    day's OHLC alone doesn't say whether the high or low came first, this
+ *    is the conservative assumption: if both the stop and something more
+ *    favorable are technically touched on the same day, the stop wins.
+ *  - If the stop isn't hit and the target isn't touched, the trade is
+ *    invalidated (and closed at that day's close) the first day Supertrend
+ *    flips against the position — that's the strategy's own signal that the
+ *    setup has broken, so it doubles as a second, unbounded stop-loss rule
+ *    when no fixed one is given.
  *  - Only one trade per stock at a time: while a trade is open, later
  *    signals on the same stock are ignored until it exits.
  *  - A trade still neither hit nor invalidated after MAX_HOLD_DAYS trading
  *    days, or still running when the data runs out, is marked "open" (not
  *    counted as a win or loss).
  */
-export function backtestSymbol(symbol: string, candles: Candle[]): BacktestTrade[] {
+export function backtestSymbol(symbol: string, candles: Candle[], options: BacktestOptions = {}): BacktestTrade[] {
+  const stopLossPercent = options.stopLossPercent && options.stopLossPercent > 0 ? options.stopLossPercent : null;
   if (candles.length < MIN_CANDLES) return [];
 
   const heikinAshi = toHeikinAshi(candles);
@@ -125,20 +140,34 @@ export function backtestSymbol(symbol: string, candles: Candle[]): BacktestTrade
 
       const entryPrice = candles[entryIndex].open;
       const entryDate = candles[entryIndex].date;
+      const stopLossPrice = stopLossPercent
+        ? direction === "short"
+          ? entryPrice * (1 + stopLossPercent / 100)
+          : entryPrice * (1 - stopLossPercent / 100)
+        : null;
 
       let exitIndex: number | null = null;
       let exitReason: BacktestTrade["exitReason"] = "open";
       const maxJ = Math.min(candles.length - 1, entryIndex + MAX_HOLD_DAYS);
 
       for (let j = entryIndex; j <= maxJ; j++) {
-        const targetNow = targetSeries[j];
-        if (Number.isNaN(targetNow)) continue;
+        if (stopLossPrice !== null) {
+          const hitStop = direction === "short" ? candles[j].high >= stopLossPrice : candles[j].low <= stopLossPrice;
+          if (hitStop) {
+            exitIndex = j;
+            exitReason = "stop_loss";
+            break;
+          }
+        }
 
-        const touchedTarget = direction === "short" ? candles[j].low <= targetNow : candles[j].high >= targetNow;
-        if (touchedTarget) {
-          exitIndex = j;
-          exitReason = "target";
-          break;
+        const targetNow = targetSeries[j];
+        if (!Number.isNaN(targetNow)) {
+          const touchedTarget = direction === "short" ? candles[j].low <= targetNow : candles[j].high >= targetNow;
+          if (touchedTarget) {
+            exitIndex = j;
+            exitReason = "target";
+            break;
+          }
         }
 
         const flippedAgainst = direction === "short" ? supertrend[j].trend === "down" : supertrend[j].trend === "up";
@@ -156,7 +185,12 @@ export function backtestSymbol(symbol: string, candles: Candle[]): BacktestTrade
 
       if (exitIndex !== null) {
         exitDate = candles[exitIndex].date;
-        exitPrice = exitReason === "target" ? targetSeries[exitIndex] : candles[exitIndex].close;
+        exitPrice =
+          exitReason === "target"
+            ? targetSeries[exitIndex]
+            : exitReason === "stop_loss"
+              ? (stopLossPrice as number)
+              : candles[exitIndex].close;
         pnlPercent =
           direction === "short"
             ? ((entryPrice - exitPrice) / entryPrice) * 100
