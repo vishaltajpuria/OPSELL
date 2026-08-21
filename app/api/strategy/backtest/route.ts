@@ -13,20 +13,25 @@ export const maxDuration = 60;
 const INDEX_BY_KEY = new Map(INDEX_DEFS.map((d) => [d.key, d]));
 
 type Timeframe = "day" | "4h" | "2h";
+const ALL_TIMEFRAMES: Timeframe[] = ["day", "4h", "2h"];
 
 // ~3 years of calendar days for daily bars: gives roughly 2 years of days
 // the strategy can actually fire signals on, after the ~210-bar
 // SMA200/Supertrend warm-up eats into the front of the fetched range.
 const DAILY_LOOKBACK_DAYS = 1100;
 // Kite's historical-data endpoint caps 60minute-interval requests to ~400
-// days; 380 stays under that with a safety margin. One request per symbol
-// either way (matching the daily path), so this doesn't change the
-// symbol-count budget — see MAX_SYMBOLS in components/BacktestRunner.tsx.
+// days; 380 stays under that with a safety margin.
 const HOURLY_LOOKBACK_DAYS = 380;
 
 const BASE_MAX_HOLD_BARS = 90; // matches backtestSymbol's own daily default
 const BASE_VOL_WINDOW_BARS = 20;
 const BASE_PERIODS_PER_YEAR = 252;
+
+// One historical request per (symbol, timeframe) pair. Selecting multiple
+// timeframes multiplies the request count, so the safe symbol count shrinks
+// accordingly — enforced client-side (components/BacktestRunner.tsx) but
+// hard-capped here too as a safety net against an oversized request.
+const MAX_WORK_ITEMS = 300;
 
 const TIMEFRAME_CONFIG: Record<
   Timeframe,
@@ -44,6 +49,8 @@ function isoDate(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
+type TimeframedTrade = (BacktestTrade | OptionTrade) & { timeframe: Timeframe };
+
 export async function POST(request: NextRequest) {
   const accessToken = getAccessToken();
   if (!accessToken) {
@@ -57,8 +64,10 @@ export async function POST(request: NextRequest) {
   if (symbols.length === 0) {
     return NextResponse.json({ error: "Provide a non-empty symbols array." }, { status: 400 });
   }
-  const timeframe: Timeframe = body?.timeframe === "4h" || body?.timeframe === "2h" ? body.timeframe : "day";
-  const config = TIMEFRAME_CONFIG[timeframe];
+  const timeframesRaw: unknown[] = Array.isArray(body?.timeframes) ? body.timeframes : [];
+  const timeframes = Array.from(new Set(timeframesRaw.filter((t): t is Timeframe => ALL_TIMEFRAMES.includes(t as Timeframe))));
+  if (timeframes.length === 0) timeframes.push("day");
+
   const stopLossPercent =
     typeof body?.stopLossPercent === "number" && body.stopLossPercent > 0 ? body.stopLossPercent : undefined;
   const directionFilter =
@@ -67,50 +76,63 @@ export async function POST(request: NextRequest) {
   const spreadWidthPercent =
     typeof body?.spreadWidthPercent === "number" && body.spreadWidthPercent > 0 ? body.spreadWidthPercent : undefined;
 
+  const workItems = symbols.flatMap((symbol) => timeframes.map((timeframe) => ({ symbol, timeframe })));
+  if (workItems.length > MAX_WORK_ITEMS) {
+    return NextResponse.json(
+      {
+        error: `${symbols.length} symbols × ${timeframes.length} timeframe(s) = ${workItems.length} requests, over the ${MAX_WORK_ITEMS} limit. Use fewer symbols or fewer timeframes.`,
+      },
+      { status: 400 }
+    );
+  }
+
   const now = new Date();
   const to = isoDate(now);
-  const from = isoDate(new Date(now.getTime() - config.lookbackDays * 24 * 60 * 60 * 1000));
-
-  const maxHoldBars = BASE_MAX_HOLD_BARS * config.barsPerDay;
-  const volWindowBars = BASE_VOL_WINDOW_BARS * config.barsPerDay;
-  const periodsPerYear = BASE_PERIODS_PER_YEAR * config.barsPerDay;
 
   const errors: string[] = [];
 
   // Batched at Kite's 3 req/sec historical-data limit (not a plain
   // sequential loop with a fixed per-request delay — that wastes time
-  // waiting even after a fast response, and at 100+ symbols risks the
-  // whole run creeping past Vercel Hobby's 60s function cap). Still one
-  // historical request per symbol regardless of timeframe.
-  const perSymbolResults = await runRateLimited(symbols, async (symbol) => {
+  // waiting even after a fast response, and risks the whole run creeping
+  // past Vercel Hobby's 60s function cap). One historical request per
+  // (symbol, timeframe) pair.
+  const perItemResults = await runRateLimited(workItems, async ({ symbol, timeframe }) => {
     try {
+      const config = TIMEFRAME_CONFIG[timeframe];
+      const from = isoDate(new Date(now.getTime() - config.lookbackDays * 24 * 60 * 60 * 1000));
       const indexDef = INDEX_BY_KEY.get(symbol);
       const token = indexDef
         ? await getIndexToken(indexDef.exchange, indexDef.tradingsymbol, accessToken)
         : await getEquityToken(symbol, accessToken);
       if (!token) {
-        errors.push(`${symbol}: no instrument token found.`);
-        return [] as BacktestTrade[] | OptionTrade[];
+        errors.push(`${symbol} (${timeframe}): no instrument token found.`);
+        return [] as TimeframedTrade[];
       }
       const rawCandles: Candle[] = await getHistoricalCandles(token, config.interval, from, to, accessToken);
       const candles = config.resample ? config.resample(rawCandles) : rawCandles;
+      const maxHoldBars = BASE_MAX_HOLD_BARS * config.barsPerDay;
       const stockTrades = backtestSymbol(symbol, candles, { stopLossPercent, directionFilter, maxHoldBars });
-      if (!sellOptions) return stockTrades;
+
+      if (!sellOptions) {
+        return stockTrades.map((t) => ({ ...t, timeframe })) as TimeframedTrade[];
+      }
+      const volWindowBars = BASE_VOL_WINDOW_BARS * config.barsPerDay;
+      const periodsPerYear = BASE_PERIODS_PER_YEAR * config.barsPerDay;
       return stockTrades
         .map((t) => toOptionTrade(t, candles, { spreadWidthPercent, volWindowBars, periodsPerYear }))
-        .filter((t): t is OptionTrade => t !== null);
+        .filter((t): t is OptionTrade => t !== null)
+        .map((t) => ({ ...t, timeframe })) as TimeframedTrade[];
     } catch (err) {
-      errors.push(`${symbol}: ${err instanceof Error ? err.message : "failed"}`);
-      return [] as BacktestTrade[] | OptionTrade[];
+      errors.push(`${symbol} (${timeframe}): ${err instanceof Error ? err.message : "failed"}`);
+      return [] as TimeframedTrade[];
     }
   });
 
-  const trades = perSymbolResults.flat();
+  const trades = perItemResults.flat();
 
   return NextResponse.json({
-    from,
     to,
-    timeframe,
+    timeframes,
     symbolCount: symbols.length,
     stopLossPercent: stopLossPercent ?? null,
     directionFilter: directionFilter ?? null,

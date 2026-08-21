@@ -2,8 +2,13 @@
 
 import { useMemo, useState } from "react";
 
+type Timeframe = "day" | "4h" | "2h";
+const ALL_TIMEFRAMES: Timeframe[] = ["day", "4h", "2h"];
+const TIMEFRAME_LABEL: Record<Timeframe, string> = { day: "Daily", "4h": "4H", "2h": "2H" };
+
 type Trade = {
   symbol: string;
+  timeframe: Timeframe;
   direction: "short" | "long";
   label: string;
   signalDate: string;
@@ -18,6 +23,7 @@ type Trade = {
 
 type OptionTrade = {
   symbol: string;
+  timeframe: Timeframe;
   direction: "short" | "long";
   label: string;
   optionType: "PUT" | "CALL";
@@ -41,9 +47,8 @@ type OptionTrade = {
 };
 
 type BacktestResponse = {
-  from: string;
   to: string;
-  timeframe: "day" | "4h" | "2h";
+  timeframes: Timeframe[];
   symbolCount: number;
   stopLossPercent: number | null;
   directionFilter: "short" | "long" | null;
@@ -53,8 +58,6 @@ type BacktestResponse = {
   errors: string[];
 };
 
-const TIMEFRAME_LABEL: Record<BacktestResponse["timeframe"], string> = { day: "Daily", "4h": "4H", "2h": "2H" };
-
 function fmt(n: number, digits = 2) {
   return n.toLocaleString("en-IN", { maximumFractionDigits: digits, minimumFractionDigits: digits });
 }
@@ -62,6 +65,16 @@ function fmt(n: number, digits = 2) {
 function csvEscape(value: unknown): string {
   const s = String(value ?? "");
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+function groupByTimeframe<T extends { timeframe: Timeframe }>(trades: T[]): [Timeframe, T[]][] {
+  const bucket = new Map<Timeframe, T[]>();
+  for (const t of trades) {
+    const arr = bucket.get(t.timeframe) ?? [];
+    arr.push(t);
+    bucket.set(t.timeframe, arr);
+  }
+  return ALL_TIMEFRAMES.filter((tf) => bucket.has(tf)).map((tf) => [tf, bucket.get(tf) as T[]]);
 }
 
 function summarizeStock(trades: Trade[]) {
@@ -132,35 +145,45 @@ function summarizeOptions(trades: OptionTrade[]) {
   };
 }
 
-function toStockCsv(result: BacktestResponse, trades: Trade[], overall: ReturnType<typeof summarizeStock>): string {
+function toStockCsv(result: BacktestResponse, trades: Trade[]): string {
   const lines: string[] = [
     "OPSELL Backtest",
-    `Timeframe,${TIMEFRAME_LABEL[result.timeframe]}`,
-    `Range,${result.from} to ${result.to}`,
+    `Timeframes,${result.timeframes.map((tf) => TIMEFRAME_LABEL[tf]).join(" + ")}`,
+    `As of,${result.to}`,
     `Symbols,${result.symbolCount}`,
     `Stop loss %,${result.stopLossPercent ?? "none"}`,
     `Direction filter,${result.directionFilter ?? "both"}`,
-    `Total trades,${overall.total}`,
-    `Resolved,${overall.resolved}`,
-    `Wins,${overall.wins}`,
-    `Losses,${overall.losses}`,
-    `Open,${overall.open}`,
-    `Win rate %,${overall.winRate.toFixed(2)}`,
-    `Avg P&L % per trade,${overall.avgPnl.toFixed(2)}`,
-    `Total P&L % (summed),${overall.totalPnl.toFixed(2)}`,
-    `Avg win %,${overall.avgWinPnl.toFixed(2)}`,
-    `Avg loss %,${overall.avgLossPnl.toFixed(2)}`,
-    `Best trade %,${overall.bestPnl.toFixed(2)}`,
-    `Worst trade %,${overall.worstPnl.toFixed(2)}`,
-    `Exits — target,${overall.exitCounts.target}`,
-    `Exits — stop loss,${overall.exitCounts.stop_loss}`,
-    `Exits — invalidated,${overall.exitCounts.invalidated}`,
     "",
-    ["Symbol", "Direction", "Label", "SignalDate", "EntryDate", "EntryPrice", "ExitDate", "ExitPrice", "ExitReason", "PnLPercent", "HoldDays"].join(","),
   ];
+  for (const [tf, tfTrades] of groupByTimeframe(trades)) {
+    const overall = summarizeStock(tfTrades);
+    lines.push(
+      `--- ${TIMEFRAME_LABEL[tf]} ---`,
+      `Total trades,${overall.total}`,
+      `Resolved,${overall.resolved}`,
+      `Wins,${overall.wins}`,
+      `Losses,${overall.losses}`,
+      `Open,${overall.open}`,
+      `Win rate %,${overall.winRate.toFixed(2)}`,
+      `Avg P&L % per trade,${overall.avgPnl.toFixed(2)}`,
+      `Total P&L % (summed),${overall.totalPnl.toFixed(2)}`,
+      `Avg win %,${overall.avgWinPnl.toFixed(2)}`,
+      `Avg loss %,${overall.avgLossPnl.toFixed(2)}`,
+      `Best trade %,${overall.bestPnl.toFixed(2)}`,
+      `Worst trade %,${overall.worstPnl.toFixed(2)}`,
+      `Exits — target,${overall.exitCounts.target}`,
+      `Exits — stop loss,${overall.exitCounts.stop_loss}`,
+      `Exits — invalidated,${overall.exitCounts.invalidated}`,
+      ""
+    );
+  }
+  lines.push(
+    ["Timeframe", "Symbol", "Direction", "Label", "SignalDate", "EntryDate", "EntryPrice", "ExitDate", "ExitPrice", "ExitReason", "PnLPercent", "HoldBars"].join(",")
+  );
   for (const t of trades) {
     lines.push(
       [
+        TIMEFRAME_LABEL[t.timeframe],
         t.symbol,
         t.direction,
         t.label,
@@ -180,11 +203,11 @@ function toStockCsv(result: BacktestResponse, trades: Trade[], overall: ReturnTy
   return lines.join("\n");
 }
 
-function toOptionsCsv(result: BacktestResponse, trades: OptionTrade[], overall: ReturnType<typeof summarizeOptions>): string {
+function toOptionsCsv(result: BacktestResponse, trades: OptionTrade[]): string {
   const lines: string[] = [
     "OPSELL Backtest — Option-selling (MODELED, not real historical premiums)",
-    `Timeframe,${TIMEFRAME_LABEL[result.timeframe]}`,
-    `Range,${result.from} to ${result.to}`,
+    `Timeframes,${result.timeframes.map((tf) => TIMEFRAME_LABEL[tf]).join(" + ")}`,
+    `As of,${result.to}`,
     `Symbols,${result.symbolCount}`,
     `Stop loss %,${result.stopLossPercent ?? "none"}`,
     `Direction filter,${result.directionFilter ?? "both"}`,
@@ -192,30 +215,40 @@ function toOptionsCsv(result: BacktestResponse, trades: OptionTrade[], overall: 
     `Spread,${result.spreadWidthPercent ? `credit spread, long leg ~${3 + result.spreadWidthPercent}% OTM (${result.spreadWidthPercent}% wider than the short leg)` : "naked (uncapped downside)"}`,
     "Expiry,Near-month NSE monthly expiry",
     "Pricing,Black-Scholes, volatility estimated from the underlying's own trailing realized volatility",
-    `Total trades,${overall.total}`,
-    `Resolved,${overall.resolved}`,
-    `Wins,${overall.wins}`,
-    `Losses,${overall.losses}`,
-    `Open,${overall.open}`,
-    `Settled at expiry,${overall.expiredCount}`,
-    `Win rate %,${overall.winRate.toFixed(2)}`,
-    `Avg P&L ₹/share,${overall.avgPnl.toFixed(2)}`,
-    `Total P&L ₹/share (summed),${overall.totalPnl.toFixed(2)}`,
-    `Avg win ₹/share,${overall.avgWinPnl.toFixed(2)}`,
-    `Avg loss ₹/share,${overall.avgLossPnl.toFixed(2)}`,
-    `Best trade ₹/share,${overall.bestPnl.toFixed(2)}`,
-    `Worst trade ₹/share,${overall.worstPnl.toFixed(2)}`,
-    `Avg capped max loss ₹/share,${overall.avgMaxLoss === null ? "n/a (naked)" : overall.avgMaxLoss.toFixed(2)}`,
     "",
-    [
-      "Symbol", "OptionType", "IsSpread", "ShortStrike", "LongStrike", "ExpiryDate", "Direction", "Label", "SignalDate", "EntryDate",
-      "UnderlyingEntryPrice", "EntryPremium", "ExitDate", "UnderlyingExitPrice", "ExitPremium",
-      "SettledAtExpiry", "MaxLossPerShare", "PnLPerShare", "PnLPercentOfPremium", "HoldDays",
-    ].join(","),
   ];
+  for (const [tf, tfTrades] of groupByTimeframe(trades)) {
+    const overall = summarizeOptions(tfTrades);
+    lines.push(
+      `--- ${TIMEFRAME_LABEL[tf]} ---`,
+      `Total trades,${overall.total}`,
+      `Resolved,${overall.resolved}`,
+      `Wins,${overall.wins}`,
+      `Losses,${overall.losses}`,
+      `Open,${overall.open}`,
+      `Settled at expiry,${overall.expiredCount}`,
+      `Win rate %,${overall.winRate.toFixed(2)}`,
+      `Avg P&L ₹/share,${overall.avgPnl.toFixed(2)}`,
+      `Total P&L ₹/share (summed),${overall.totalPnl.toFixed(2)}`,
+      `Avg win ₹/share,${overall.avgWinPnl.toFixed(2)}`,
+      `Avg loss ₹/share,${overall.avgLossPnl.toFixed(2)}`,
+      `Best trade ₹/share,${overall.bestPnl.toFixed(2)}`,
+      `Worst trade ₹/share,${overall.worstPnl.toFixed(2)}`,
+      `Avg capped max loss ₹/share,${overall.avgMaxLoss === null ? "n/a (naked)" : overall.avgMaxLoss.toFixed(2)}`,
+      ""
+    );
+  }
+  lines.push(
+    [
+      "Timeframe", "Symbol", "OptionType", "IsSpread", "ShortStrike", "LongStrike", "ExpiryDate", "Direction", "Label", "SignalDate", "EntryDate",
+      "UnderlyingEntryPrice", "EntryPremium", "ExitDate", "UnderlyingExitPrice", "ExitPremium",
+      "SettledAtExpiry", "MaxLossPerShare", "PnLPerShare", "PnLPercentOfPremium", "HoldBars",
+    ].join(",")
+  );
   for (const t of trades) {
     lines.push(
       [
+        TIMEFRAME_LABEL[t.timeframe],
         t.symbol,
         t.optionType,
         t.isSpread ? "yes" : "no",
@@ -256,9 +289,228 @@ function downloadCsv(csv: string, filename: string) {
   URL.revokeObjectURL(url);
 }
 
+function StockResultBlock({ timeframe, trades }: { timeframe: Timeframe; trades: Trade[] }) {
+  const overall = summarizeStock(trades);
+  const perStock = useMemo(() => {
+    const bySymbol = new Map<string, Trade[]>();
+    for (const t of trades) {
+      const arr = bySymbol.get(t.symbol) ?? [];
+      arr.push(t);
+      bySymbol.set(t.symbol, arr);
+    }
+    return Array.from(bySymbol.entries())
+      .map(([symbol, ts]) => ({ symbol, ...summarizeStock(ts) }))
+      .sort((a, b) => b.totalPnl - a.totalPnl);
+  }, [trades]);
+
+  return (
+    <div className="mt-5">
+      <h2 className="text-sm font-semibold">{TIMEFRAME_LABEL[timeframe]}</h2>
+
+      <div className="mt-2 rounded-xl border border-border bg-surface p-4">
+        <div className="grid grid-cols-2 gap-y-2 text-sm">
+          <span className="text-muted">Total trades</span>
+          <span className="text-right font-medium">{overall.total}</span>
+          <span className="text-muted">Resolved (win/loss)</span>
+          <span className="text-right font-medium">{overall.resolved}</span>
+          <span className="text-muted">Win rate</span>
+          <span className="text-right font-medium">{fmt(overall.winRate, 1)}%</span>
+          <span className="text-muted">Wins / Losses</span>
+          <span className="text-right font-medium">
+            {overall.wins} / {overall.losses}
+          </span>
+          <span className="text-muted">Still open</span>
+          <span className="text-right font-medium">{overall.open}</span>
+          <span className="text-muted">Avg P&amp;L / trade</span>
+          <span className={`text-right font-medium ${overall.avgPnl >= 0 ? "text-accent" : "text-danger"}`}>
+            {overall.avgPnl >= 0 ? "+" : ""}
+            {fmt(overall.avgPnl)}%
+          </span>
+          <span className="text-muted">Total P&amp;L (summed)</span>
+          <span className={`text-right font-medium ${overall.totalPnl >= 0 ? "text-accent" : "text-danger"}`}>
+            {overall.totalPnl >= 0 ? "+" : ""}
+            {fmt(overall.totalPnl)}%
+          </span>
+          <span className="text-muted">Avg win / Avg loss</span>
+          <span className="text-right font-medium">
+            <span className="text-accent">+{fmt(overall.avgWinPnl)}%</span> /{" "}
+            <span className="text-danger">{fmt(overall.avgLossPnl)}%</span>
+          </span>
+          <span className="text-muted">Best / Worst trade</span>
+          <span className="text-right font-medium">
+            <span className="text-accent">+{fmt(overall.bestPnl)}%</span> /{" "}
+            <span className="text-danger">{fmt(overall.worstPnl)}%</span>
+          </span>
+          <span className="text-muted">Exits: target / stop / ST-flip</span>
+          <span className="text-right font-medium">
+            {overall.exitCounts.target} / {overall.exitCounts.stop_loss} / {overall.exitCounts.invalidated}
+          </span>
+        </div>
+      </div>
+
+      <h3 className="mt-4 text-xs font-semibold uppercase tracking-wide text-muted">Per stock</h3>
+      <ul className="mt-2 divide-y divide-border overflow-hidden rounded-xl border border-border">
+        {perStock.map((s) => (
+          <li key={s.symbol} className="bg-surface px-4 py-3">
+            <div className="flex items-center justify-between">
+              <span className="font-medium">{s.symbol}</span>
+              <span className={`text-sm font-semibold ${s.totalPnl >= 0 ? "text-accent" : "text-danger"}`}>
+                {s.totalPnl >= 0 ? "+" : ""}
+                {fmt(s.totalPnl)}%
+              </span>
+            </div>
+            <div className="mt-1 text-[11px] text-muted">
+              {s.resolved} resolved ({s.wins}W / {s.losses}L, {fmt(s.winRate, 0)}% win rate)
+              {s.open > 0 && ` · ${s.open} open`}
+            </div>
+          </li>
+        ))}
+      </ul>
+
+      <h3 className="mt-4 text-xs font-semibold uppercase tracking-wide text-muted">All trades</h3>
+      <ul className="mt-2 divide-y divide-border overflow-hidden rounded-xl border border-border">
+        {trades.map((t, i) => (
+          <li key={i} className="bg-surface px-4 py-3">
+            <div className="flex items-center justify-between">
+              <span className="font-medium">
+                {t.symbol} <span className="text-[10px] font-normal text-muted">{t.label}</span>
+              </span>
+              <span
+                className={`text-sm font-semibold ${
+                  t.pnlPercent === null ? "text-muted" : t.pnlPercent >= 0 ? "text-accent" : "text-danger"
+                }`}
+              >
+                {t.pnlPercent === null ? "open" : `${t.pnlPercent >= 0 ? "+" : ""}${fmt(t.pnlPercent)}%`}
+              </span>
+            </div>
+            <div className="mt-1 text-[11px] text-muted">
+              Entry {t.entryDate} @ {fmt(t.entryPrice)}
+              {t.exitDate && ` · Exit ${t.exitDate} @ ${fmt(t.exitPrice as number)} (${t.exitReason.replace("_", " ")})`}
+              {t.holdDays !== null && ` · ${t.holdDays}${timeframe === "day" ? "d" : " bars"}`}
+            </div>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function OptionResultBlock({ timeframe, trades }: { timeframe: Timeframe; trades: OptionTrade[] }) {
+  const overall = summarizeOptions(trades);
+  const perStock = useMemo(() => {
+    const bySymbol = new Map<string, OptionTrade[]>();
+    for (const t of trades) {
+      const arr = bySymbol.get(t.symbol) ?? [];
+      arr.push(t);
+      bySymbol.set(t.symbol, arr);
+    }
+    return Array.from(bySymbol.entries())
+      .map(([symbol, ts]) => ({ symbol, ...summarizeOptions(ts) }))
+      .sort((a, b) => b.totalPnl - a.totalPnl);
+  }, [trades]);
+
+  return (
+    <div className="mt-5">
+      <h2 className="text-sm font-semibold">{TIMEFRAME_LABEL[timeframe]}</h2>
+
+      <div className="mt-2 rounded-xl border border-border bg-surface p-4">
+        <div className="grid grid-cols-2 gap-y-2 text-sm">
+          <span className="text-muted">Total trades</span>
+          <span className="text-right font-medium">{overall.total}</span>
+          <span className="text-muted">Resolved (win/loss)</span>
+          <span className="text-right font-medium">{overall.resolved}</span>
+          <span className="text-muted">Win rate</span>
+          <span className="text-right font-medium">{fmt(overall.winRate, 1)}%</span>
+          <span className="text-muted">Wins / Losses</span>
+          <span className="text-right font-medium">
+            {overall.wins} / {overall.losses}
+          </span>
+          <span className="text-muted">Still open / Settled at expiry</span>
+          <span className="text-right font-medium">
+            {overall.open} / {overall.expiredCount}
+          </span>
+          <span className="text-muted">Avg P&amp;L / trade</span>
+          <span className={`text-right font-medium ${overall.avgPnl >= 0 ? "text-accent" : "text-danger"}`}>
+            {overall.avgPnl >= 0 ? "+" : ""}
+            ₹{fmt(overall.avgPnl)}
+          </span>
+          <span className="text-muted">Total P&amp;L (summed)</span>
+          <span className={`text-right font-medium ${overall.totalPnl >= 0 ? "text-accent" : "text-danger"}`}>
+            {overall.totalPnl >= 0 ? "+" : ""}
+            ₹{fmt(overall.totalPnl)}
+          </span>
+          <span className="text-muted">Avg win / Avg loss</span>
+          <span className="text-right font-medium">
+            <span className="text-accent">+₹{fmt(overall.avgWinPnl)}</span> /{" "}
+            <span className="text-danger">₹{fmt(overall.avgLossPnl)}</span>
+          </span>
+          <span className="text-muted">Best / Worst trade</span>
+          <span className="text-right font-medium">
+            <span className="text-accent">+₹{fmt(overall.bestPnl)}</span> /{" "}
+            <span className="text-danger">₹{fmt(overall.worstPnl)}</span>
+          </span>
+          {overall.avgMaxLoss !== null && (
+            <>
+              <span className="text-muted">Avg capped max loss</span>
+              <span className="text-right font-medium text-danger">₹{fmt(overall.avgMaxLoss)}</span>
+            </>
+          )}
+        </div>
+        <p className="mt-2 text-[10px] text-muted">Per-share, one option lot's worth of shares. Not scaled by lot size.</p>
+      </div>
+
+      <h3 className="mt-4 text-xs font-semibold uppercase tracking-wide text-muted">Per stock</h3>
+      <ul className="mt-2 divide-y divide-border overflow-hidden rounded-xl border border-border">
+        {perStock.map((s) => (
+          <li key={s.symbol} className="bg-surface px-4 py-3">
+            <div className="flex items-center justify-between">
+              <span className="font-medium">{s.symbol}</span>
+              <span className={`text-sm font-semibold ${s.totalPnl >= 0 ? "text-accent" : "text-danger"}`}>
+                {s.totalPnl >= 0 ? "+" : ""}₹{fmt(s.totalPnl)}
+              </span>
+            </div>
+            <div className="mt-1 text-[11px] text-muted">
+              {s.resolved} resolved ({s.wins}W / {s.losses}L, {fmt(s.winRate, 0)}% win rate)
+              {s.open > 0 && ` · ${s.open} open`}
+            </div>
+          </li>
+        ))}
+      </ul>
+
+      <h3 className="mt-4 text-xs font-semibold uppercase tracking-wide text-muted">All trades</h3>
+      <ul className="mt-2 divide-y divide-border overflow-hidden rounded-xl border border-border">
+        {trades.map((t, i) => (
+          <li key={i} className="bg-surface px-4 py-3">
+            <div className="flex items-center justify-between">
+              <span className="font-medium">
+                {t.symbol} <span className="text-[10px] font-normal text-muted">{t.optionType} {t.label}</span>
+              </span>
+              <span
+                className={`text-sm font-semibold ${
+                  t.pnlPerShare === null ? "text-muted" : t.pnlPerShare >= 0 ? "text-accent" : "text-danger"
+                }`}
+              >
+                {t.pnlPerShare === null ? "open" : `${t.pnlPerShare >= 0 ? "+" : ""}₹${fmt(t.pnlPerShare)}`}
+              </span>
+            </div>
+            <div className="mt-1 text-[11px] text-muted">
+              {t.isSpread ? `Short ${fmt(t.strike)} / Long ${fmt(t.longStrike as number)}` : `Strike ${fmt(t.strike)}`} exp{" "}
+              {t.expiryDate} · Net credit {fmt(t.entryPremium, 2)}
+              {t.exitPremium !== null &&
+                ` → Cost to close ${fmt(t.exitPremium, 2)} (${t.settledAtExpiry ? "expiry" : t.underlyingExitReason.replace("_", " ")})`}
+              {t.maxLossPerShare !== null && ` · Max loss ₹${fmt(t.maxLossPerShare)}`}
+              {t.holdDays !== null && ` · ${t.holdDays}${timeframe === "day" ? "d" : " bars"}`}
+            </div>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export default function BacktestRunner() {
   const [symbolsText, setSymbolsText] = useState("");
-  const [timeframe, setTimeframe] = useState<"day" | "4h" | "2h">("day");
+  const [timeframes, setTimeframes] = useState<Set<Timeframe>>(new Set(["day"]));
   const [stopLossText, setStopLossText] = useState("");
   const [directionFilter, setDirectionFilter] = useState<"both" | "short" | "long">("both");
   const [sellOptions, setSellOptions] = useState(false);
@@ -267,45 +519,31 @@ export default function BacktestRunner() {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<BacktestResponse | null>(null);
 
-  const stockTrades = useMemo(
-    () => (result && !result.sellOptions ? (result.trades as Trade[]) : []),
+  const stockGroups = useMemo(
+    () => (result && !result.sellOptions ? groupByTimeframe(result.trades as Trade[]) : []),
     [result]
   );
-  const optionTrades = useMemo(
-    () => (result && result.sellOptions ? (result.trades as OptionTrade[]) : []),
+  const optionGroups = useMemo(
+    () => (result && result.sellOptions ? groupByTimeframe(result.trades as OptionTrade[]) : []),
     [result]
   );
 
-  const stockOverall = useMemo(() => (result && !result.sellOptions ? summarizeStock(stockTrades) : null), [result, stockTrades]);
-  const optionOverall = useMemo(() => (result && result.sellOptions ? summarizeOptions(optionTrades) : null), [result, optionTrades]);
+  // ~50s at Kite's 3 req/sec per (symbol, timeframe) request — keeps a
+  // single run under Vercel's 60s cap. Selecting more timeframes multiplies
+  // the request count, so the safe symbol count shrinks accordingly.
+  const MAX_WORK_ITEMS = 150;
 
-  const stockPerStock = useMemo(() => {
-    if (!result || result.sellOptions) return [];
-    const bySymbol = new Map<string, Trade[]>();
-    for (const t of stockTrades) {
-      const arr = bySymbol.get(t.symbol) ?? [];
-      arr.push(t);
-      bySymbol.set(t.symbol, arr);
-    }
-    return Array.from(bySymbol.entries())
-      .map(([symbol, trades]) => ({ symbol, ...summarizeStock(trades) }))
-      .sort((a, b) => b.totalPnl - a.totalPnl);
-  }, [result, stockTrades]);
-
-  const optionPerStock = useMemo(() => {
-    if (!result || !result.sellOptions) return [];
-    const bySymbol = new Map<string, OptionTrade[]>();
-    for (const t of optionTrades) {
-      const arr = bySymbol.get(t.symbol) ?? [];
-      arr.push(t);
-      bySymbol.set(t.symbol, arr);
-    }
-    return Array.from(bySymbol.entries())
-      .map(([symbol, trades]) => ({ symbol, ...summarizeOptions(trades) }))
-      .sort((a, b) => b.totalPnl - a.totalPnl);
-  }, [result, optionTrades]);
-
-  const MAX_SYMBOLS = 150; // ~50s at Kite's 3 req/sec — keeps a single run under Vercel's 60s cap
+  function toggleTimeframe(tf: Timeframe) {
+    setTimeframes((prev) => {
+      const next = new Set(prev);
+      if (next.has(tf)) {
+        if (next.size > 1) next.delete(tf); // keep at least one selected
+      } else {
+        next.add(tf);
+      }
+      return next;
+    });
+  }
 
   async function run() {
     const symbols = symbolsText
@@ -317,8 +555,12 @@ export default function BacktestRunner() {
       setStatus("error");
       return;
     }
-    if (symbols.length > MAX_SYMBOLS) {
-      setError(`That's ${symbols.length} symbols — please run ${MAX_SYMBOLS} or fewer at a time (split into two runs), or the whole thing risks timing out.`);
+    const workItems = symbols.length * timeframes.size;
+    if (workItems > MAX_WORK_ITEMS) {
+      const maxSymbolsForSelection = Math.floor(MAX_WORK_ITEMS / timeframes.size);
+      setError(
+        `${symbols.length} symbols × ${timeframes.size} timeframe(s) = ${workItems} requests, over the ${MAX_WORK_ITEMS} limit. With this many timeframes selected, use ${maxSymbolsForSelection} symbols or fewer (or select fewer timeframes).`
+      );
       setStatus("error");
       return;
     }
@@ -343,7 +585,7 @@ export default function BacktestRunner() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           symbols,
-          timeframe,
+          timeframes: Array.from(timeframes),
           stopLossPercent,
           directionFilter: directionFilter === "both" ? undefined : directionFilter,
           sellOptions,
@@ -383,15 +625,15 @@ export default function BacktestRunner() {
       />
 
       <div className="mt-3">
-        <span className="block text-xs text-muted">Timeframe</span>
+        <span className="block text-xs text-muted">Timeframe (tap to select more than one)</span>
         <div className="mt-1 flex gap-2">
-          {(["day", "4h", "2h"] as const).map((tf) => (
+          {ALL_TIMEFRAMES.map((tf) => (
             <button
               key={tf}
               type="button"
-              onClick={() => setTimeframe(tf)}
+              onClick={() => toggleTimeframe(tf)}
               className={`flex-1 rounded-lg border px-3 py-2 text-xs font-medium ${
-                timeframe === tf ? "border-accent bg-accent/10 text-accent" : "border-border bg-surface2 text-muted"
+                timeframes.has(tf) ? "border-accent bg-accent/10 text-accent" : "border-border bg-surface2 text-muted"
               }`}
             >
               {TIMEFRAME_LABEL[tf]}
@@ -400,7 +642,9 @@ export default function BacktestRunner() {
         </div>
         <p className="mt-1 text-[10px] text-muted">
           Daily covers ~2 years. 4H/2H are resampled from 60-minute candles, capped by Kite&apos;s ~400-day
-          history limit for that interval — roughly the last 13 months instead.
+          history limit for that interval — roughly the last 13 months instead. Selecting more than one
+          timeframe fetches each separately, so the safe symbol count shrinks — e.g. up to {Math.floor(MAX_WORK_ITEMS / 3)} symbols
+          with all three selected.
         </p>
       </div>
 
@@ -479,62 +723,22 @@ export default function BacktestRunner() {
 
       {error && <p className="mt-2 text-xs text-danger">{error}</p>}
 
-      {result && stockOverall && !result.sellOptions && (
+      {result && !result.sellOptions && (
         <div className="mt-5">
           <div className="flex items-center justify-between gap-3">
             <p className="text-xs text-muted">
-              {TIMEFRAME_LABEL[result.timeframe]} · {result.symbolCount} symbol{result.symbolCount === 1 ? "" : "s"} ·{" "}
-              {result.from} to {result.to} · {result.directionFilter ? `${result.directionFilter} only` : "both directions"} ·{" "}
+              {result.timeframes.map((tf) => TIMEFRAME_LABEL[tf]).join(" + ")} · {result.symbolCount} symbol
+              {result.symbolCount === 1 ? "" : "s"} · as of {result.to} ·{" "}
+              {result.directionFilter ? `${result.directionFilter} only` : "both directions"} ·{" "}
               {result.stopLossPercent ? `${result.stopLossPercent}% stop loss` : "no stop loss"}
               {result.errors.length > 0 && ` · ${result.errors.length} error(s)`}
             </p>
             <button
-              onClick={() => downloadCsv(toStockCsv(result, stockTrades, stockOverall), `opsell-backtest-${result.from}-to-${result.to}.csv`)}
+              onClick={() => downloadCsv(toStockCsv(result, result.trades as Trade[]), `opsell-backtest-${result.to}.csv`)}
               className="shrink-0 rounded-lg border border-border bg-surface2 px-3 py-1.5 text-xs font-medium"
             >
               Download CSV
             </button>
-          </div>
-
-          <div className="mt-3 rounded-xl border border-border bg-surface p-4">
-            <div className="grid grid-cols-2 gap-y-2 text-sm">
-              <span className="text-muted">Total trades</span>
-              <span className="text-right font-medium">{stockOverall.total}</span>
-              <span className="text-muted">Resolved (win/loss)</span>
-              <span className="text-right font-medium">{stockOverall.resolved}</span>
-              <span className="text-muted">Win rate</span>
-              <span className="text-right font-medium">{fmt(stockOverall.winRate, 1)}%</span>
-              <span className="text-muted">Wins / Losses</span>
-              <span className="text-right font-medium">
-                {stockOverall.wins} / {stockOverall.losses}
-              </span>
-              <span className="text-muted">Still open</span>
-              <span className="text-right font-medium">{stockOverall.open}</span>
-              <span className="text-muted">Avg P&amp;L / trade</span>
-              <span className={`text-right font-medium ${stockOverall.avgPnl >= 0 ? "text-accent" : "text-danger"}`}>
-                {stockOverall.avgPnl >= 0 ? "+" : ""}
-                {fmt(stockOverall.avgPnl)}%
-              </span>
-              <span className="text-muted">Total P&amp;L (summed)</span>
-              <span className={`text-right font-medium ${stockOverall.totalPnl >= 0 ? "text-accent" : "text-danger"}`}>
-                {stockOverall.totalPnl >= 0 ? "+" : ""}
-                {fmt(stockOverall.totalPnl)}%
-              </span>
-              <span className="text-muted">Avg win / Avg loss</span>
-              <span className="text-right font-medium">
-                <span className="text-accent">+{fmt(stockOverall.avgWinPnl)}%</span> /{" "}
-                <span className="text-danger">{fmt(stockOverall.avgLossPnl)}%</span>
-              </span>
-              <span className="text-muted">Best / Worst trade</span>
-              <span className="text-right font-medium">
-                <span className="text-accent">+{fmt(stockOverall.bestPnl)}%</span> /{" "}
-                <span className="text-danger">{fmt(stockOverall.worstPnl)}%</span>
-              </span>
-              <span className="text-muted">Exits: target / stop / ST-flip</span>
-              <span className="text-right font-medium">
-                {stockOverall.exitCounts.target} / {stockOverall.exitCounts.stop_loss} / {stockOverall.exitCounts.invalidated}
-              </span>
-            </div>
           </div>
 
           {result.errors.length > 0 && (
@@ -548,54 +752,13 @@ export default function BacktestRunner() {
             </details>
           )}
 
-          <h2 className="mt-5 text-xs font-semibold uppercase tracking-wide text-muted">Per stock</h2>
-          <ul className="mt-2 divide-y divide-border overflow-hidden rounded-xl border border-border">
-            {stockPerStock.map((s) => (
-              <li key={s.symbol} className="bg-surface px-4 py-3">
-                <div className="flex items-center justify-between">
-                  <span className="font-medium">{s.symbol}</span>
-                  <span className={`text-sm font-semibold ${s.totalPnl >= 0 ? "text-accent" : "text-danger"}`}>
-                    {s.totalPnl >= 0 ? "+" : ""}
-                    {fmt(s.totalPnl)}%
-                  </span>
-                </div>
-                <div className="mt-1 text-[11px] text-muted">
-                  {s.resolved} resolved ({s.wins}W / {s.losses}L, {fmt(s.winRate, 0)}% win rate)
-                  {s.open > 0 && ` · ${s.open} open`}
-                </div>
-              </li>
-            ))}
-          </ul>
-
-          <h2 className="mt-5 text-xs font-semibold uppercase tracking-wide text-muted">All trades</h2>
-          <ul className="mt-2 divide-y divide-border overflow-hidden rounded-xl border border-border">
-            {stockTrades.map((t, i) => (
-              <li key={i} className="bg-surface px-4 py-3">
-                <div className="flex items-center justify-between">
-                  <span className="font-medium">
-                    {t.symbol} <span className="text-[10px] font-normal text-muted">{t.label}</span>
-                  </span>
-                  <span
-                    className={`text-sm font-semibold ${
-                      t.pnlPercent === null ? "text-muted" : t.pnlPercent >= 0 ? "text-accent" : "text-danger"
-                    }`}
-                  >
-                    {t.pnlPercent === null ? "open" : `${t.pnlPercent >= 0 ? "+" : ""}${fmt(t.pnlPercent)}%`}
-                  </span>
-                </div>
-                <div className="mt-1 text-[11px] text-muted">
-                  Entry {t.entryDate} @ {fmt(t.entryPrice)}
-                  {t.exitDate &&
-                    ` · Exit ${t.exitDate} @ ${fmt(t.exitPrice as number)} (${t.exitReason.replace("_", " ")})`}
-                  {t.holdDays !== null && ` · ${t.holdDays}${result.timeframe === "day" ? "d" : " bars"}`}
-                </div>
-              </li>
-            ))}
-          </ul>
+          {stockGroups.map(([tf, trades]) => (
+            <StockResultBlock key={tf} timeframe={tf} trades={trades} />
+          ))}
         </div>
       )}
 
-      {result && optionOverall && result.sellOptions && (
+      {result && result.sellOptions && (
         <div className="mt-5">
           <p className="rounded-lg border border-accent/40 bg-accent/10 p-2.5 text-xs text-accent">
             Modeled option-selling results — Black-Scholes estimates off the underlying&apos;s realized volatility,
@@ -605,66 +768,19 @@ export default function BacktestRunner() {
 
           <div className="mt-3 flex items-center justify-between gap-3">
             <p className="text-xs text-muted">
-              {TIMEFRAME_LABEL[result.timeframe]} · {result.symbolCount} symbol{result.symbolCount === 1 ? "" : "s"} ·{" "}
-              {result.from} to {result.to} · {result.directionFilter ? `${result.directionFilter} only` : "both directions"} ·{" "}
+              {result.timeframes.map((tf) => TIMEFRAME_LABEL[tf]).join(" + ")} · {result.symbolCount} symbol
+              {result.symbolCount === 1 ? "" : "s"} · as of {result.to} ·{" "}
+              {result.directionFilter ? `${result.directionFilter} only` : "both directions"} ·{" "}
               {result.spreadWidthPercent ? `credit spread (short ~3% / long ~${3 + result.spreadWidthPercent}% OTM)` : "naked (uncapped)"} ·{" "}
               {result.stopLossPercent ? `${result.stopLossPercent}% underlying stop loss` : "no underlying stop loss"}
               {result.errors.length > 0 && ` · ${result.errors.length} error(s)`}
             </p>
             <button
-              onClick={() =>
-                downloadCsv(toOptionsCsv(result, optionTrades, optionOverall), `opsell-backtest-options-${result.from}-to-${result.to}.csv`)
-              }
+              onClick={() => downloadCsv(toOptionsCsv(result, result.trades as OptionTrade[]), `opsell-backtest-options-${result.to}.csv`)}
               className="shrink-0 rounded-lg border border-border bg-surface2 px-3 py-1.5 text-xs font-medium"
             >
               Download CSV
             </button>
-          </div>
-
-          <div className="mt-3 rounded-xl border border-border bg-surface p-4">
-            <div className="grid grid-cols-2 gap-y-2 text-sm">
-              <span className="text-muted">Total trades</span>
-              <span className="text-right font-medium">{optionOverall.total}</span>
-              <span className="text-muted">Resolved (win/loss)</span>
-              <span className="text-right font-medium">{optionOverall.resolved}</span>
-              <span className="text-muted">Win rate</span>
-              <span className="text-right font-medium">{fmt(optionOverall.winRate, 1)}%</span>
-              <span className="text-muted">Wins / Losses</span>
-              <span className="text-right font-medium">
-                {optionOverall.wins} / {optionOverall.losses}
-              </span>
-              <span className="text-muted">Still open / Settled at expiry</span>
-              <span className="text-right font-medium">
-                {optionOverall.open} / {optionOverall.expiredCount}
-              </span>
-              <span className="text-muted">Avg P&amp;L / trade</span>
-              <span className={`text-right font-medium ${optionOverall.avgPnl >= 0 ? "text-accent" : "text-danger"}`}>
-                {optionOverall.avgPnl >= 0 ? "+" : ""}
-                ₹{fmt(optionOverall.avgPnl)}
-              </span>
-              <span className="text-muted">Total P&amp;L (summed)</span>
-              <span className={`text-right font-medium ${optionOverall.totalPnl >= 0 ? "text-accent" : "text-danger"}`}>
-                {optionOverall.totalPnl >= 0 ? "+" : ""}
-                ₹{fmt(optionOverall.totalPnl)}
-              </span>
-              <span className="text-muted">Avg win / Avg loss</span>
-              <span className="text-right font-medium">
-                <span className="text-accent">+₹{fmt(optionOverall.avgWinPnl)}</span> /{" "}
-                <span className="text-danger">₹{fmt(optionOverall.avgLossPnl)}</span>
-              </span>
-              <span className="text-muted">Best / Worst trade</span>
-              <span className="text-right font-medium">
-                <span className="text-accent">+₹{fmt(optionOverall.bestPnl)}</span> /{" "}
-                <span className="text-danger">₹{fmt(optionOverall.worstPnl)}</span>
-              </span>
-              {optionOverall.avgMaxLoss !== null && (
-                <>
-                  <span className="text-muted">Avg capped max loss</span>
-                  <span className="text-right font-medium text-danger">₹{fmt(optionOverall.avgMaxLoss)}</span>
-                </>
-              )}
-            </div>
-            <p className="mt-2 text-[10px] text-muted">Per-share, one option lot's worth of shares. Not scaled by lot size.</p>
           </div>
 
           {result.errors.length > 0 && (
@@ -678,51 +794,9 @@ export default function BacktestRunner() {
             </details>
           )}
 
-          <h2 className="mt-5 text-xs font-semibold uppercase tracking-wide text-muted">Per stock</h2>
-          <ul className="mt-2 divide-y divide-border overflow-hidden rounded-xl border border-border">
-            {optionPerStock.map((s) => (
-              <li key={s.symbol} className="bg-surface px-4 py-3">
-                <div className="flex items-center justify-between">
-                  <span className="font-medium">{s.symbol}</span>
-                  <span className={`text-sm font-semibold ${s.totalPnl >= 0 ? "text-accent" : "text-danger"}`}>
-                    {s.totalPnl >= 0 ? "+" : ""}₹{fmt(s.totalPnl)}
-                  </span>
-                </div>
-                <div className="mt-1 text-[11px] text-muted">
-                  {s.resolved} resolved ({s.wins}W / {s.losses}L, {fmt(s.winRate, 0)}% win rate)
-                  {s.open > 0 && ` · ${s.open} open`}
-                </div>
-              </li>
-            ))}
-          </ul>
-
-          <h2 className="mt-5 text-xs font-semibold uppercase tracking-wide text-muted">All trades</h2>
-          <ul className="mt-2 divide-y divide-border overflow-hidden rounded-xl border border-border">
-            {optionTrades.map((t, i) => (
-              <li key={i} className="bg-surface px-4 py-3">
-                <div className="flex items-center justify-between">
-                  <span className="font-medium">
-                    {t.symbol} <span className="text-[10px] font-normal text-muted">{t.optionType} {t.label}</span>
-                  </span>
-                  <span
-                    className={`text-sm font-semibold ${
-                      t.pnlPerShare === null ? "text-muted" : t.pnlPerShare >= 0 ? "text-accent" : "text-danger"
-                    }`}
-                  >
-                    {t.pnlPerShare === null ? "open" : `${t.pnlPerShare >= 0 ? "+" : ""}₹${fmt(t.pnlPerShare)}`}
-                  </span>
-                </div>
-                <div className="mt-1 text-[11px] text-muted">
-                  {t.isSpread ? `Short ${fmt(t.strike)} / Long ${fmt(t.longStrike as number)}` : `Strike ${fmt(t.strike)}`} exp{" "}
-                  {t.expiryDate} · Net credit {fmt(t.entryPremium, 2)}
-                  {t.exitPremium !== null &&
-                    ` → Cost to close ${fmt(t.exitPremium, 2)} (${t.settledAtExpiry ? "expiry" : t.underlyingExitReason.replace("_", " ")})`}
-                  {t.maxLossPerShare !== null && ` · Max loss ₹${fmt(t.maxLossPerShare)}`}
-                  {t.holdDays !== null && ` · ${t.holdDays}${result.timeframe === "day" ? "d" : " bars"}`}
-                </div>
-              </li>
-            ))}
-          </ul>
+          {optionGroups.map(([tf, trades]) => (
+            <OptionResultBlock key={tf} timeframe={tf} trades={trades} />
+          ))}
         </div>
       )}
     </div>
