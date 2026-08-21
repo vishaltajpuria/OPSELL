@@ -15,10 +15,13 @@ const INDEX_BY_KEY = new Map(INDEX_DEFS.map((d) => [d.key, d]));
 type Timeframe = "day" | "4h" | "2h";
 const ALL_TIMEFRAMES: Timeframe[] = ["day", "4h", "2h"];
 
-// ~3 years of calendar days for daily bars: gives roughly 2 years of days
-// the strategy can actually fire signals on, after the ~210-bar
-// SMA200/Supertrend warm-up eats into the front of the fetched range.
-const DAILY_LOOKBACK_DAYS = 1100;
+// Kite's historical-data endpoint caps "day"-interval requests to ~2000
+// days; 1980 stays under that with a safety margin. After the ~210-bar
+// SMA200/Supertrend warm-up eats into the front of the fetched range (~300
+// calendar days), this leaves roughly 4.6 years the strategy can actually
+// fire signals on — as close to a genuine 5-year backtest as a single Kite
+// request allows without chunking into multiple calls per symbol.
+const DAILY_LOOKBACK_DAYS = 1980;
 // Kite's historical-data endpoint caps 60minute-interval requests to ~400
 // days; 380 stays under that with a safety margin.
 const HOURLY_LOOKBACK_DAYS = 380;
