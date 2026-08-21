@@ -54,12 +54,24 @@ export function blackScholes(
 }
 
 /**
- * Annualized realized volatility of the trailing `window` days of closes
+ * Annualized realized volatility of the trailing `window` bars of closes
  * ending at `endIndex`, used as an implied-volatility proxy since real
  * historical IV data isn't available. Falls back to a flat 30% when there
  * isn't enough trailing history yet.
+ *
+ * periodsPerYear must match what one bar-to-bar step actually represents:
+ * 252 for daily bars (the default), ~504 for 4H bars (~2/trading day), ~1008
+ * for 2H bars (~4/trading day). Getting this wrong doesn't just skew the
+ * number — annualizing intraday bar-to-bar returns with the daily 252 factor
+ * would understate volatility by roughly sqrt(bars-per-day), since each
+ * return only reflects a fraction of a day's actual movement.
  */
-export function realizedVolatility(closes: number[], endIndex: number, window: number): number {
+export function realizedVolatility(
+  closes: number[],
+  endIndex: number,
+  window: number,
+  periodsPerYear = 252
+): number {
   const start = Math.max(1, endIndex - window + 1);
   const returns: number[] = [];
   for (let i = start; i <= endIndex; i++) {
@@ -70,7 +82,7 @@ export function realizedVolatility(closes: number[], endIndex: number, window: n
   if (returns.length < 5) return 0.3;
   const mean = returns.reduce((a, b) => a + b, 0) / returns.length;
   const variance = returns.reduce((a, b) => a + (b - mean) ** 2, 0) / (returns.length - 1);
-  return Math.sqrt(variance) * Math.sqrt(252);
+  return Math.sqrt(variance) * Math.sqrt(periodsPerYear);
 }
 
 /**

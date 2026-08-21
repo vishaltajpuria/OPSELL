@@ -4,7 +4,8 @@ import { blackScholes, realizedVolatility, lastThursdayOfMonth } from "@/lib/opt
 
 const OTM_PERCENT = 3; // short leg: ~3% out of the money
 const RISK_FREE_RATE = 0.065; // constant proxy, not fetched live
-const VOL_WINDOW = 20; // trading days of realized vol used as an IV proxy
+const DEFAULT_VOL_WINDOW_BARS = 20; // ~1 trading month of daily bars used as an IV proxy
+const DEFAULT_PERIODS_PER_YEAR = 252; // daily bars
 
 export type OptionTrade = {
   symbol: string;
@@ -36,6 +37,14 @@ export type OptionsBacktestOptions = {
   // max loss and the margin required. Omitted/0 = naked (uncapped downside,
   // the original single-leg behavior).
   spreadWidthPercent?: number;
+  // How many bars of trailing realized volatility to use as the IV proxy,
+  // and how many bars make up a year for annualizing it — both must match
+  // what a single candle in `candles` actually represents. Defaults assume
+  // daily bars (20-bar window, 252/year); pass scaled-up values for 4H/2H
+  // candles (e.g. ~40 bars / ~504 per year for 4H) or premiums will be
+  // priced off understated volatility.
+  volWindowBars?: number;
+  periodsPerYear?: number;
 };
 
 function toDateOnly(iso: string): string {
@@ -87,6 +96,11 @@ function indexOnOrBefore(candles: Candle[], dateOnly: string): number | null {
  * (target/stop/Supertrend-flip) would land after that month's expiry, both
  * legs are instead settled at expiry using intrinsic value only (no time
  * value left), since the contracts wouldn't still exist by then.
+ *
+ * `candles` can be daily, 4H, or 2H bars — the expiry/settlement logic is
+ * date-based and unaffected either way, but the volatility estimate isn't:
+ * pass volWindowBars/periodsPerYear scaled to match, or premiums will be
+ * priced off understated volatility (see OptionsBacktestOptions).
  */
 export function toOptionTrade(
   trade: BacktestTrade,
@@ -95,6 +109,9 @@ export function toOptionTrade(
 ): OptionTrade | null {
   const spreadWidthPercent =
     options.spreadWidthPercent && options.spreadWidthPercent > 0 ? options.spreadWidthPercent : null;
+  const volWindowBars = options.volWindowBars && options.volWindowBars > 0 ? options.volWindowBars : DEFAULT_VOL_WINDOW_BARS;
+  const periodsPerYear =
+    options.periodsPerYear && options.periodsPerYear > 0 ? options.periodsPerYear : DEFAULT_PERIODS_PER_YEAR;
 
   const closes = candles.map((c) => c.close);
   const entryIdx = indexOnOrBefore(candles, toDateOnly(trade.entryDate));
@@ -113,7 +130,7 @@ export function toOptionTrade(
       : trade.entryPrice * (1 + (OTM_PERCENT + spreadWidthPercent) / 100)
     : null;
 
-  const entryVol = realizedVolatility(closes, entryIdx, VOL_WINDOW);
+  const entryVol = realizedVolatility(closes, entryIdx, volWindowBars, periodsPerYear);
   const entryT = Math.max(0, (expiry.getTime() - entryDateObj.getTime()) / (365 * 24 * 60 * 60 * 1000));
   const shortEntryPremium = blackScholes(
     optionType === "PUT" ? "put" : "call",
@@ -177,7 +194,7 @@ export function toOptionTrade(
           : Math.max(exitSpot - longStrike, 0)
         : 0;
   } else {
-    const exitVol = realizedVolatility(closes, exitIdx, VOL_WINDOW);
+    const exitVol = realizedVolatility(closes, exitIdx, volWindowBars, periodsPerYear);
     const exitDateObj = utcFromDateOnly(toDateOnly(candles[exitIdx].date));
     const exitT = Math.max(0, (expiry.getTime() - exitDateObj.getTime()) / (365 * 24 * 60 * 60 * 1000));
     shortExitPremium = blackScholes(

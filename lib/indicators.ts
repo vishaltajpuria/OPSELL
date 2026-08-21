@@ -101,12 +101,13 @@ export function computeSMA(candles: Candle[], period: number): number[] {
   return sma;
 }
 
-// Resamples 60-minute candles into session-anchored 4H bars: the first 4
-// hourly candles of each NSE trading session (9:15-13:15 IST) form one bar,
-// the remainder of the session (13:15-15:30) forms a shorter final bar —
-// matching how charting platforms bucket intraday timeframes within a single
-// session rather than using calendar-aligned 4-hour blocks.
-export function resampleTo4H(hourly: Candle[]): Candle[] {
+// Resamples 60-minute candles into session-anchored N-hour bars: the first
+// N hourly candles of each NSE trading session (starting 9:15 IST) form one
+// bar, the remainder of the session forms a shorter final bar — matching how
+// charting platforms bucket intraday timeframes within a single session
+// rather than using calendar-aligned blocks. N=4 gives 9:15-13:15 as bar 1
+// and 13:15-15:30 as bar 2; N=2 gives four bars, the last one short.
+function resampleToNHour(hourly: Candle[], n: number): Candle[] {
   const byDay = new Map<string, Candle[]>();
   for (const c of hourly) {
     const day = c.date.slice(0, 10);
@@ -117,8 +118,8 @@ export function resampleTo4H(hourly: Candle[]): Candle[] {
 
   const result: Candle[] = [];
   for (const dayCandles of byDay.values()) {
-    for (let i = 0; i < dayCandles.length; i += 4) {
-      const chunk = dayCandles.slice(i, i + 4);
+    for (let i = 0; i < dayCandles.length; i += n) {
+      const chunk = dayCandles.slice(i, i + n);
       result.push({
         date: chunk[0].date,
         open: chunk[0].open,
@@ -130,4 +131,12 @@ export function resampleTo4H(hourly: Candle[]): Candle[] {
     }
   }
   return result;
+}
+
+export function resampleTo4H(hourly: Candle[]): Candle[] {
+  return resampleToNHour(hourly, 4);
+}
+
+export function resampleTo2H(hourly: Candle[]): Candle[] {
+  return resampleToNHour(hourly, 2);
 }

@@ -43,6 +43,7 @@ type OptionTrade = {
 type BacktestResponse = {
   from: string;
   to: string;
+  timeframe: "day" | "4h" | "2h";
   symbolCount: number;
   stopLossPercent: number | null;
   directionFilter: "short" | "long" | null;
@@ -51,6 +52,8 @@ type BacktestResponse = {
   trades: (Trade | OptionTrade)[];
   errors: string[];
 };
+
+const TIMEFRAME_LABEL: Record<BacktestResponse["timeframe"], string> = { day: "Daily", "4h": "4H", "2h": "2H" };
 
 function fmt(n: number, digits = 2) {
   return n.toLocaleString("en-IN", { maximumFractionDigits: digits, minimumFractionDigits: digits });
@@ -132,6 +135,7 @@ function summarizeOptions(trades: OptionTrade[]) {
 function toStockCsv(result: BacktestResponse, trades: Trade[], overall: ReturnType<typeof summarizeStock>): string {
   const lines: string[] = [
     "OPSELL Backtest",
+    `Timeframe,${TIMEFRAME_LABEL[result.timeframe]}`,
     `Range,${result.from} to ${result.to}`,
     `Symbols,${result.symbolCount}`,
     `Stop loss %,${result.stopLossPercent ?? "none"}`,
@@ -179,6 +183,7 @@ function toStockCsv(result: BacktestResponse, trades: Trade[], overall: ReturnTy
 function toOptionsCsv(result: BacktestResponse, trades: OptionTrade[], overall: ReturnType<typeof summarizeOptions>): string {
   const lines: string[] = [
     "OPSELL Backtest — Option-selling (MODELED, not real historical premiums)",
+    `Timeframe,${TIMEFRAME_LABEL[result.timeframe]}`,
     `Range,${result.from} to ${result.to}`,
     `Symbols,${result.symbolCount}`,
     `Stop loss %,${result.stopLossPercent ?? "none"}`,
@@ -253,6 +258,7 @@ function downloadCsv(csv: string, filename: string) {
 
 export default function BacktestRunner() {
   const [symbolsText, setSymbolsText] = useState("");
+  const [timeframe, setTimeframe] = useState<"day" | "4h" | "2h">("day");
   const [stopLossText, setStopLossText] = useState("");
   const [directionFilter, setDirectionFilter] = useState<"both" | "short" | "long">("both");
   const [sellOptions, setSellOptions] = useState(false);
@@ -337,6 +343,7 @@ export default function BacktestRunner() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           symbols,
+          timeframe,
           stopLossPercent,
           directionFilter: directionFilter === "both" ? undefined : directionFilter,
           sellOptions,
@@ -359,12 +366,12 @@ export default function BacktestRunner() {
     <div>
       <p className="mt-1 text-xs text-muted">
         Paste NSE symbols (comma or newline separated) — stocks like RELIANCE, or indices: NIFTY, BANKNIFTY,
-        FINNIFTY, MIDCPNIFTY, SENSEX. ~2 years of daily data per symbol, walk-forward simulated against the same
-        Supertrend + SMA logic as the Strategy tab. Assumptions: entry at next day&apos;s open after a signal;
-        exit the first day price touches the (moving) target SMA, or (if a stop loss below is set) the first day
-        price moves that % against entry, or the first day Supertrend flips against the trade if neither of
-        those hit first; trades still unresolved after ~90 trading days are marked &quot;open&quot;, not counted
-        as a win or loss.
+        FINNIFTY, MIDCPNIFTY, SENSEX. Walk-forward simulated against the same Supertrend + SMA logic as the
+        Strategy tab. Assumptions: entry at next bar&apos;s open after a signal; exit the first bar price touches
+        the (moving) target SMA, or (if a stop loss below is set) the first bar price moves that % against entry,
+        or the first bar Supertrend flips against the trade if neither of those hit first; trades still
+        unresolved after ~90 trading days&apos; worth of bars are marked &quot;open&quot;, not counted as a win
+        or loss.
       </p>
 
       <textarea
@@ -374,6 +381,28 @@ export default function BacktestRunner() {
         rows={5}
         className="mt-3 w-full rounded-lg border border-border bg-surface2 p-3 text-sm"
       />
+
+      <div className="mt-3">
+        <span className="block text-xs text-muted">Timeframe</span>
+        <div className="mt-1 flex gap-2">
+          {(["day", "4h", "2h"] as const).map((tf) => (
+            <button
+              key={tf}
+              type="button"
+              onClick={() => setTimeframe(tf)}
+              className={`flex-1 rounded-lg border px-3 py-2 text-xs font-medium ${
+                timeframe === tf ? "border-accent bg-accent/10 text-accent" : "border-border bg-surface2 text-muted"
+              }`}
+            >
+              {TIMEFRAME_LABEL[tf]}
+            </button>
+          ))}
+        </div>
+        <p className="mt-1 text-[10px] text-muted">
+          Daily covers ~2 years. 4H/2H are resampled from 60-minute candles, capped by Kite&apos;s ~400-day
+          history limit for that interval — roughly the last 13 months instead.
+        </p>
+      </div>
 
       <div className="mt-3">
         <span className="block text-xs text-muted">Direction</span>
@@ -454,8 +483,8 @@ export default function BacktestRunner() {
         <div className="mt-5">
           <div className="flex items-center justify-between gap-3">
             <p className="text-xs text-muted">
-              {result.symbolCount} symbol{result.symbolCount === 1 ? "" : "s"} · {result.from} to {result.to} ·{" "}
-              {result.directionFilter ? `${result.directionFilter} only` : "both directions"} ·{" "}
+              {TIMEFRAME_LABEL[result.timeframe]} · {result.symbolCount} symbol{result.symbolCount === 1 ? "" : "s"} ·{" "}
+              {result.from} to {result.to} · {result.directionFilter ? `${result.directionFilter} only` : "both directions"} ·{" "}
               {result.stopLossPercent ? `${result.stopLossPercent}% stop loss` : "no stop loss"}
               {result.errors.length > 0 && ` · ${result.errors.length} error(s)`}
             </p>
@@ -558,7 +587,7 @@ export default function BacktestRunner() {
                   Entry {t.entryDate} @ {fmt(t.entryPrice)}
                   {t.exitDate &&
                     ` · Exit ${t.exitDate} @ ${fmt(t.exitPrice as number)} (${t.exitReason.replace("_", " ")})`}
-                  {t.holdDays !== null && ` · ${t.holdDays}d`}
+                  {t.holdDays !== null && ` · ${t.holdDays}${result.timeframe === "day" ? "d" : " bars"}`}
                 </div>
               </li>
             ))}
@@ -576,8 +605,8 @@ export default function BacktestRunner() {
 
           <div className="mt-3 flex items-center justify-between gap-3">
             <p className="text-xs text-muted">
-              {result.symbolCount} symbol{result.symbolCount === 1 ? "" : "s"} · {result.from} to {result.to} ·{" "}
-              {result.directionFilter ? `${result.directionFilter} only` : "both directions"} ·{" "}
+              {TIMEFRAME_LABEL[result.timeframe]} · {result.symbolCount} symbol{result.symbolCount === 1 ? "" : "s"} ·{" "}
+              {result.from} to {result.to} · {result.directionFilter ? `${result.directionFilter} only` : "both directions"} ·{" "}
               {result.spreadWidthPercent ? `credit spread (short ~3% / long ~${3 + result.spreadWidthPercent}% OTM)` : "naked (uncapped)"} ·{" "}
               {result.stopLossPercent ? `${result.stopLossPercent}% underlying stop loss` : "no underlying stop loss"}
               {result.errors.length > 0 && ` · ${result.errors.length} error(s)`}
@@ -689,7 +718,7 @@ export default function BacktestRunner() {
                   {t.exitPremium !== null &&
                     ` → Cost to close ${fmt(t.exitPremium, 2)} (${t.settledAtExpiry ? "expiry" : t.underlyingExitReason.replace("_", " ")})`}
                   {t.maxLossPerShare !== null && ` · Max loss ₹${fmt(t.maxLossPerShare)}`}
-                  {t.holdDays !== null && ` · ${t.holdDays}d`}
+                  {t.holdDays !== null && ` · ${t.holdDays}${result.timeframe === "day" ? "d" : " bars"}`}
                 </div>
               </li>
             ))}

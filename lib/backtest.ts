@@ -6,10 +6,15 @@ const SUPERTREND_MULTIPLIER = 1;
 const SMA_SEQUENCE = [20, 50, 100, 200] as const;
 const MIN_CANDLES = 210;
 
-// Trades still unresolved this long after entry are marked "open" rather
-// than forced closed — long enough that most real trades will have hit
-// their target or been invalidated well before this.
-const MAX_HOLD_DAYS = 90;
+// Trades still unresolved this many BARS after entry are marked "open"
+// rather than forced closed — long enough on the daily timeframe that most
+// real trades will have hit their target or been invalidated well before
+// this. Bars, not calendar days: on an intraday timeframe (4H/2H) the same
+// bar count covers proportionally less calendar time, so callers backtesting
+// those pass a scaled-up maxHoldBars (see BacktestOptions) rather than
+// leaving this as an implicit "90 days" that would quietly become "90 bars
+// = ~45 days" on 4H or "~22 days" on 2H.
+const DEFAULT_MAX_HOLD_BARS = 90;
 
 export type BacktestTrade = {
   symbol: string;
@@ -38,6 +43,11 @@ export type BacktestOptions = {
   // (a long signal you're not taking shouldn't block a later short one).
   // Omitted = both directions, matching the original behavior.
   directionFilter?: "short" | "long";
+  // Bars (not calendar days) after which an unresolved trade is forced to
+  // "open" — see DEFAULT_MAX_HOLD_BARS. Pass a scaled-up value on intraday
+  // timeframes so the real-time window stays consistent with the daily
+  // default of ~90 trading days.
+  maxHoldBars?: number;
 };
 
 function signalLabel(direction: "short" | "long", triggerPeriod: number): string {
@@ -78,13 +88,14 @@ function signalLabel(direction: "short" | "long", triggerPeriod: number): string
  *    when no fixed one is given.
  *  - Only one trade per stock at a time: while a trade is open, later
  *    signals on the same stock are ignored until it exits.
- *  - A trade still neither hit nor invalidated after MAX_HOLD_DAYS trading
- *    days, or still running when the data runs out, is marked "open" (not
- *    counted as a win or loss).
+ *  - A trade still neither hit nor invalidated after maxHoldBars bars (90 by
+ *    default — see BacktestOptions), or still running when the data runs
+ *    out, is marked "open" (not counted as a win or loss).
  */
 export function backtestSymbol(symbol: string, candles: Candle[], options: BacktestOptions = {}): BacktestTrade[] {
   const stopLossPercent = options.stopLossPercent && options.stopLossPercent > 0 ? options.stopLossPercent : null;
   const directionFilter = options.directionFilter ?? null;
+  const maxHoldBars = options.maxHoldBars && options.maxHoldBars > 0 ? options.maxHoldBars : DEFAULT_MAX_HOLD_BARS;
   if (candles.length < MIN_CANDLES) return [];
 
   const heikinAshi = toHeikinAshi(candles);
@@ -157,7 +168,7 @@ export function backtestSymbol(symbol: string, candles: Candle[], options: Backt
 
       let exitIndex: number | null = null;
       let exitReason: BacktestTrade["exitReason"] = "open";
-      const maxJ = Math.min(candles.length - 1, entryIndex + MAX_HOLD_DAYS);
+      const maxJ = Math.min(candles.length - 1, entryIndex + maxHoldBars);
 
       for (let j = entryIndex; j <= maxJ; j++) {
         if (stopLossPrice !== null) {
