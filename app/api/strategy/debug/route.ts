@@ -38,6 +38,48 @@ export async function GET(request: NextRequest) {
     const sma50 = computeSMA(candles, 50);
     const sma100 = computeSMA(candles, 100);
 
+    // Scan the FULL series (not just the last 20 rows below) for day-over-day
+    // jumps that look like an unadjusted stock split/bonus rather than normal
+    // volatility: a big overnight gap where the new day's whole range sits
+    // outside the previous day's range (a real gap-up/down still overlaps or
+    // sits just beyond the prior close; a split/bonus divides the price by a
+    // clean ratio like 2, 3, 5, 10 with no such continuity).
+    const corporateActionCandidates: {
+      date: string;
+      prevDate: string;
+      prevClose: number;
+      open: number;
+      changePct: number;
+      approxRatio: number;
+    }[] = [];
+    for (let i = 1; i < candles.length; i++) {
+      const prev = candles[i - 1];
+      const cur = candles[i];
+      if (prev.close <= 0) continue;
+      const changePct = ((cur.open - prev.close) / prev.close) * 100;
+      if (Math.abs(changePct) < 15) continue;
+      // Ignore ordinary large gaps: a real gap still has some overlap or near-overlap
+      // with the prior day's range. A split/bonus produces a clean-ish ratio.
+      const ratio = prev.close / cur.open;
+      const nearestWholeRatio = Math.round(ratio);
+      const looksLikeCleanRatio =
+        nearestWholeRatio >= 2 && Math.abs(ratio - nearestWholeRatio) / nearestWholeRatio < 0.05;
+      const inverseRatio = cur.open / prev.close;
+      const nearestWholeInverse = Math.round(inverseRatio);
+      const looksLikeCleanInverse =
+        nearestWholeInverse >= 2 && Math.abs(inverseRatio - nearestWholeInverse) / nearestWholeInverse < 0.05;
+      if (Math.abs(changePct) >= 15 && (looksLikeCleanRatio || looksLikeCleanInverse || Math.abs(changePct) >= 30)) {
+        corporateActionCandidates.push({
+          date: cur.date,
+          prevDate: prev.date,
+          prevClose: prev.close,
+          open: cur.open,
+          changePct: Math.round(changePct * 100) / 100,
+          approxRatio: looksLikeCleanRatio ? nearestWholeRatio : looksLikeCleanInverse ? 1 / nearestWholeInverse : 0,
+        });
+      }
+    }
+
     const last = 20;
     const rows = candles.slice(-last).map((c, idx) => {
       const i = candles.length - last + idx;
@@ -64,6 +106,7 @@ export async function GET(request: NextRequest) {
       todayCandlePatchedFromLiveQuote: wasPatched,
       rawLastCandleCloseFromHistoricalApi: rawCandles[rawCandles.length - 1]?.close,
       patchedLastCandleClose: candles[candles.length - 1]?.close,
+      possibleUnadjustedCorporateActions: corporateActionCandidates,
       last20: rows,
     });
   } catch (err) {
