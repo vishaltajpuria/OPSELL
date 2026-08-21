@@ -43,7 +43,7 @@ export type StoredSignal = {
   entryPrice: number;
   supertrendValue: number;
   triggerSma: SmaPoint;
-  targetSma: SmaPoint | null;
+  targetSma: SmaPoint;
 };
 
 export type LatestSignals = { date: string; signals: StoredSignal[] };

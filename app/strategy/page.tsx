@@ -23,7 +23,7 @@ export default async function StrategyPage() {
     <main className="px-4 pt-6">
       <h1 className="text-xl font-semibold">Strategy</h1>
       <p className="mt-1 text-sm text-muted">
-        Supertrend(14,1) + SMA20 crossover — Daily for stocks, Daily &amp; 4H for indices
+        Supertrend(14,1) + SMA20/50/100/200 crossover — Daily for stocks, Daily &amp; 4H for indices
       </p>
 
       {error && (
@@ -60,8 +60,8 @@ export default async function StrategyPage() {
                   </span>
                 </div>
                 <div className="mt-1 text-[11px] text-muted">
-                  Entry {fmt(s.entryPrice)} · ST {fmt(s.supertrendValue)} · SMA{s.triggerSma.period} crossed the line
-                  {s.targetSma && ` · Target SMA${s.targetSma.period} (${fmt(s.targetSma.value)})`}
+                  Entry {fmt(s.entryPrice)} · ST {fmt(s.supertrendValue)} · SMA{s.triggerSma.period} crossed the line ·
+                  Target SMA{s.targetSma.period} ({fmt(s.targetSma.value)})
                 </div>
               </li>
             ))}
