@@ -28,6 +28,62 @@ function fmt(n: number, digits = 2) {
   return n.toLocaleString("en-IN", { maximumFractionDigits: digits, minimumFractionDigits: digits });
 }
 
+function csvEscape(value: unknown): string {
+  const s = String(value ?? "");
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+function toCsv(result: BacktestResponse, overall: ReturnType<typeof summarize>): string {
+  const lines: string[] = [
+    "OPSELL Backtest",
+    `Range,${result.from} to ${result.to}`,
+    `Symbols,${result.symbolCount}`,
+    `Total trades,${overall.total}`,
+    `Resolved,${overall.resolved}`,
+    `Wins,${overall.wins}`,
+    `Losses,${overall.losses}`,
+    `Open,${overall.open}`,
+    `Win rate %,${overall.winRate.toFixed(2)}`,
+    `Avg P&L % per trade,${overall.avgPnl.toFixed(2)}`,
+    `Total P&L % (summed),${overall.totalPnl.toFixed(2)}`,
+    "",
+    ["Symbol", "Direction", "Label", "SignalDate", "EntryDate", "EntryPrice", "ExitDate", "ExitPrice", "ExitReason", "PnLPercent", "HoldDays"].join(","),
+  ];
+  for (const t of result.trades) {
+    lines.push(
+      [
+        t.symbol,
+        t.direction,
+        t.label,
+        t.signalDate,
+        t.entryDate,
+        t.entryPrice,
+        t.exitDate ?? "",
+        t.exitPrice ?? "",
+        t.exitReason,
+        t.pnlPercent === null ? "" : t.pnlPercent.toFixed(2),
+        t.holdDays === null ? "" : t.holdDays,
+      ]
+        .map(csvEscape)
+        .join(",")
+    );
+  }
+  return lines.join("\n");
+}
+
+function downloadCsv(result: BacktestResponse, overall: ReturnType<typeof summarize>) {
+  const csv = toCsv(result, overall);
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `opsell-backtest-${result.from}-to-${result.to}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 function summarize(trades: Trade[]) {
   const resolved = trades.filter((t) => t.pnlPercent !== null);
   const wins = resolved.filter((t) => (t.pnlPercent as number) > 0);
@@ -128,10 +184,18 @@ export default function BacktestRunner() {
 
       {result && overall && (
         <div className="mt-5">
-          <p className="text-xs text-muted">
-            {result.symbolCount} symbol{result.symbolCount === 1 ? "" : "s"} · {result.from} to {result.to}
-            {result.errors.length > 0 && ` · ${result.errors.length} error(s)`}
-          </p>
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-xs text-muted">
+              {result.symbolCount} symbol{result.symbolCount === 1 ? "" : "s"} · {result.from} to {result.to}
+              {result.errors.length > 0 && ` · ${result.errors.length} error(s)`}
+            </p>
+            <button
+              onClick={() => downloadCsv(result, overall)}
+              className="shrink-0 rounded-lg border border-border bg-surface2 px-3 py-1.5 text-xs font-medium"
+            >
+              Download CSV
+            </button>
+          </div>
 
           <div className="mt-3 rounded-xl border border-border bg-surface p-4">
             <div className="grid grid-cols-2 gap-y-2 text-sm">
