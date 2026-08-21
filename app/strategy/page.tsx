@@ -81,8 +81,8 @@ export default async function StrategyPage() {
                   </span>
                 </div>
                 <div className="mt-1 text-[11px] text-muted">
-                  Entry {fmt(s.entryPrice)} · ST {fmt(s.supertrendValue)} · SMA{s.triggerSma.period} crossed the line ·
-                  Target SMA{s.targetSma.period} ({fmt(s.targetSma.value)})
+                  {s.signalDate} · Entry {fmt(s.entryPrice)} · ST {fmt(s.supertrendValue)} · SMA{s.triggerSma.period}{" "}
+                  crossed the line · Target SMA{s.targetSma.period} ({fmt(s.targetSma.value)})
                 </div>
               </li>
             ))}
