@@ -70,12 +70,12 @@ export async function GET(request: NextRequest) {
   const errors: string[] = [];
 
   // Stocks: Daily timeframe, restricted to today's Liquid bucket.
-  const liquidity = await getStockLiquidity();
+  const liquidity = await getStockLiquidity(accessToken);
   const liquidSymbols = liquidity.filter((s) => s.bucket === "liquid").map((s) => s.symbol);
 
   await runRateLimited(liquidSymbols, async (symbol) => {
     try {
-      const token = await getEquityToken(symbol);
+      const token = await getEquityToken(symbol, accessToken);
       if (!token) return;
       const candles = await getHistoricalCandles(token, "day", fromDaily, to, accessToken);
       for (const signal of detectSignals(candles)) {
@@ -88,7 +88,7 @@ export async function GET(request: NextRequest) {
 
   // Indices: Daily + 4H (resampled from 60-minute candles).
   await runRateLimited(INDEX_DEFS, async (def) => {
-    const token = await getIndexToken(def.exchange, def.tradingsymbol);
+    const token = await getIndexToken(def.exchange, def.tradingsymbol, accessToken);
     if (!token) return;
 
     try {

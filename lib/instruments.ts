@@ -41,11 +41,14 @@ const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 
 // Cached only for this process's lifetime. On a serverless host each cold
 // start refetches the multi-thousand-row dump once, which is expected.
-async function getRawInstruments(): Promise<KiteInstrument[]> {
+//
+// accessToken defaults to the browser session cookie (for page requests);
+// the cron job has no cookie and passes its own token explicitly instead.
+async function getRawInstruments(accessToken: string = requireAccessToken()): Promise<KiteInstrument[]> {
   if (cache && Date.now() - cache.fetchedAt < CACHE_TTL_MS) {
     return cache.instruments;
   }
-  const csv = await getInstrumentsCsv("NFO", requireAccessToken());
+  const csv = await getInstrumentsCsv("NFO", accessToken);
   const rows = parseCsv(csv);
   const instruments: KiteInstrument[] = rows.map((r) => ({
     instrument_token: Number(r.instrument_token),
@@ -65,8 +68,8 @@ function toIsoDate(expiry: string): string {
   return expiry.slice(0, 10);
 }
 
-export async function listFnoStocks(): Promise<FnoStock[]> {
-  const instruments = await getRawInstruments();
+export async function listFnoStocks(accessToken: string = requireAccessToken()): Promise<FnoStock[]> {
+  const instruments = await getRawInstruments(accessToken);
   const byName = new Map<string, { lotSize: number; expiries: Set<string> }>();
 
   for (const inst of instruments) {
@@ -93,8 +96,10 @@ export type NearMonthFuture = {
 };
 
 /** One row per underlying: its nearest-expiry (near-month) stock futures contract. */
-export async function getNearMonthFutures(): Promise<Map<string, NearMonthFuture>> {
-  const instruments = await getRawInstruments();
+export async function getNearMonthFutures(
+  accessToken: string = requireAccessToken()
+): Promise<Map<string, NearMonthFuture>> {
+  const instruments = await getRawInstruments(accessToken);
   const byName = new Map<string, NearMonthFuture>();
 
   for (const inst of instruments) {
@@ -116,9 +121,10 @@ export async function getNearMonthFutures(): Promise<Map<string, NearMonthFuture
 
 export async function getOptionChainInstruments(
   symbol: string,
-  expiry: string
+  expiry: string,
+  accessToken: string = requireAccessToken()
 ): Promise<OptionInstrument[]> {
-  const instruments = await getRawInstruments();
+  const instruments = await getRawInstruments(accessToken);
   return instruments
     .filter(
       (inst) =>

@@ -45,9 +45,13 @@ function percentileRanks(values: number[]): number[] {
  * computed fresh on each call from a couple of batched Kite quote requests —
  * no historical averaging job or database needed for this split.
  */
-export async function getStockLiquidity(): Promise<StockLiquidity[]> {
-  const accessToken = requireAccessToken();
-  const [stocks, futuresMap] = await Promise.all([listFnoStocks(), getNearMonthFutures()]);
+export async function getStockLiquidity(
+  accessToken: string = requireAccessToken()
+): Promise<StockLiquidity[]> {
+  const [stocks, futuresMap] = await Promise.all([
+    listFnoStocks(accessToken),
+    getNearMonthFutures(accessToken),
+  ]);
 
   const spotKeys = stocks.map((s) => `NSE:${s.name}`);
   const futureKeys = Array.from(futuresMap.values()).map((f) => `NFO:${f.tradingsymbol}`);

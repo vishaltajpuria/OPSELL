@@ -4,12 +4,13 @@ import { parseCsv } from "@/lib/csv";
 let cache: { fetchedAt: number; byKey: Map<string, number> } | null = null;
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 
-async function loadTokens(): Promise<Map<string, number>> {
+// accessToken defaults to the browser session cookie (for page requests);
+// the cron job has no cookie and passes its own token explicitly instead.
+async function loadTokens(accessToken: string = requireAccessToken()): Promise<Map<string, number>> {
   if (cache && Date.now() - cache.fetchedAt < CACHE_TTL_MS) {
     return cache.byKey;
   }
 
-  const accessToken = requireAccessToken();
   const [nseCsv, bseCsv] = await Promise.all([
     getInstrumentsCsv("NSE", accessToken),
     getInstrumentsCsv("BSE", accessToken),
@@ -35,16 +36,20 @@ async function loadTokens(): Promise<Map<string, number>> {
 }
 
 /** Instrument token for a stock's own equity listing (for historical price data). */
-export async function getEquityToken(symbol: string): Promise<number | undefined> {
-  const tokens = await loadTokens();
+export async function getEquityToken(
+  symbol: string,
+  accessToken: string = requireAccessToken()
+): Promise<number | undefined> {
+  const tokens = await loadTokens(accessToken);
   return tokens.get(`EQ:${symbol}`);
 }
 
 /** Instrument token for an index's spot value (for historical price data). */
 export async function getIndexToken(
   exchange: "NSE" | "BSE",
-  tradingsymbol: string
+  tradingsymbol: string,
+  accessToken: string = requireAccessToken()
 ): Promise<number | undefined> {
-  const tokens = await loadTokens();
+  const tokens = await loadTokens(accessToken);
   return tokens.get(`INDEX:${exchange}:${tradingsymbol}`);
 }
