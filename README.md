@@ -72,6 +72,7 @@ Since the target is a moving SMA line, not a fixed price, the simulation has to 
 - If neither the stop loss nor the target is hit, the trade exits the first day Supertrend flips against the position, at that day's close — the strategy's own signal that the setup broke, used here as a second, unbounded stop-loss rule since the strategy itself is signal-only and doesn't define one.
 - Only one trade per stock at a time — a new signal while a trade is already open is ignored until that trade exits.
 - A trade neither hit nor invalidated within ~90 trading days (or still running when the data runs out) is marked "open", excluded from the win/loss rate rather than forced into either bucket.
+- The **Direction** selector (All / Short only / Long only) restricts which signals get taken at all — the excluded direction isn't just filtered from the results, it's skipped during detection, so an excluded long signal doesn't block a later short one from firing on the same stock. Useful since large-cap NSE stocks tend to drift upward over multi-year windows, which structurally favors longs in an unfiltered backtest — Short only isolates whether the short side holds up on its own.
 
 See the doc comment on `backtestSymbol()` in `lib/backtest.ts` for the full reasoning — these are reasonable defaults, not something the strategy itself specifies, so it's easy to point back to this if a number looks off and you want a rule changed.
 
