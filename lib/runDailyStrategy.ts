@@ -1,7 +1,7 @@
 import { getHistoricalCandles } from "@/lib/kite";
 import { saveDailySignals, type StoredSignal } from "@/lib/kv";
-import { getNearMonthFutures } from "@/lib/instruments";
-import { getIndexToken } from "@/lib/nseInstruments";
+import { listFnoStocks } from "@/lib/instruments";
+import { getEquityToken, getIndexToken } from "@/lib/nseInstruments";
 import { INDEX_DEFS } from "@/lib/indices";
 import { resampleTo4H } from "@/lib/indicators";
 import { detectSignals } from "@/lib/strategy";
@@ -58,38 +58,34 @@ export async function runDailyStrategy(accessToken: string): Promise<StrategyRun
   const signals: StoredSignal[] = [];
   const errors: string[] = [];
 
-  // Stocks: Daily timeframe, every F&O stock's near-month FUTURES contract
-  // (liquid and illiquid alike) — not the equity/spot price. Futures don't
-  // have the equity market's official weighted-average closing-price
-  // computation, which is the likely source of Kite's historical endpoint
-  // disagreeing with the live price for a still-settling equity candle.
-  // continuous=1 stitches historical data across monthly expiries into one
-  // ongoing series, since a single contract only exists for ~1 month on its
-  // own — nowhere near enough history to warm up SMA200.
-  const futuresMap = await getNearMonthFutures(accessToken);
-  const futures = Array.from(futuresMap.values());
+  // Stocks: Daily timeframe, every F&O stock (liquid and illiquid alike),
+  // on the equity/spot price. (Tried near-month continuous futures instead —
+  // reverted: Kite's continuous=1 data is a raw, non-back-adjusted
+  // concatenation of monthly contracts, confirmed via Zerodha's own docs, so
+  // it carries a real price gap at every rollover. Over a 500-day lookback
+  // that's ~16 gaps compounding into a badly corrupted ATR/Supertrend.)
+  const stocks = await listFnoStocks(accessToken);
 
+  // Kite's historical-data endpoint can still be settling today's daily
+  // candle for a while after close — fetch today's live quotes up front and
+  // use them to correct today's bar rather than trusting the historical
+  // endpoint's still-updating record for it. See lib/candleFreshness.ts.
   const liveQuotes = await batchQuote(
-    futures.map((f) => `NFO:${f.tradingsymbol}`),
+    stocks.map((s) => `NSE:${s.name}`),
     accessToken
   );
 
-  await runRateLimited(futures, async (future) => {
+  await runRateLimited(stocks, async ({ name: symbol }) => {
     try {
-      const rawCandles = await getHistoricalCandles(
-        future.instrumentToken,
-        "day",
-        fromDaily,
-        to,
-        accessToken,
-        true
-      );
-      const candles = patchTodayCandle(rawCandles, liveQuotes[`NFO:${future.tradingsymbol}`]);
+      const token = await getEquityToken(symbol, accessToken);
+      if (!token) return;
+      const rawCandles = await getHistoricalCandles(token, "day", fromDaily, to, accessToken);
+      const candles = patchTodayCandle(rawCandles, liveQuotes[`NSE:${symbol}`]);
       for (const signal of detectSignals(candles)) {
-        signals.push({ symbol: future.name, timeframe: "1D", ...signal });
+        signals.push({ symbol, timeframe: "1D", ...signal });
       }
     } catch (err) {
-      errors.push(`${future.name}: ${err instanceof Error ? err.message : "failed"}`);
+      errors.push(`${symbol}: ${err instanceof Error ? err.message : "failed"}`);
     }
   });
 
