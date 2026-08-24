@@ -89,16 +89,68 @@ export function computeSupertrend(candles: Candle[], period: number, multiplier:
   return points;
 }
 
-export function computeSMA(candles: Candle[], period: number): number[] {
-  const closes = candles.map((c) => c.close);
-  const sma: number[] = [];
-  let windowSum = 0;
-  for (let i = 0; i < closes.length; i++) {
-    windowSum += closes[i];
-    if (i >= period) windowSum -= closes[i - period];
-    sma.push(i < period - 1 ? NaN : windowSum / period);
+// Plain SMA over any numeric series, tolerant of leading NaN gaps (e.g. an
+// indicator series like RSI that isn't valid until its own warm-up period
+// has passed) — a window containing any NaN stays NaN rather than
+// poisoning every value after it the way a running-sum approach would.
+export function smaSeries(values: number[], period: number): number[] {
+  const result: number[] = new Array(values.length).fill(NaN);
+  for (let i = period - 1; i < values.length; i++) {
+    const window = values.slice(i - period + 1, i + 1);
+    if (window.some(Number.isNaN)) continue;
+    result[i] = window.reduce((a, b) => a + b, 0) / period;
   }
-  return sma;
+  return result;
+}
+
+export function computeSMA(candles: Candle[], period: number): number[] {
+  return smaSeries(candles.map((c) => c.close), period);
+}
+
+// Wilder's smoothed moving average (same recursion as computeATR, generalized
+// to any series) — tolerant of a leading NaN (e.g. index 0 of a
+// bar-to-bar change series, which has no previous bar to diff against): the
+// seed average is taken over the first `period` non-NaN values, wherever
+// they start.
+function computeRMA(values: number[], period: number): number[] {
+  const result: number[] = new Array(values.length).fill(NaN);
+  let seedSum = 0;
+  let seedCount = 0;
+  let seeded = false;
+  for (let i = 0; i < values.length; i++) {
+    const v = values[i];
+    if (Number.isNaN(v)) continue;
+    if (!seeded) {
+      seedSum += v;
+      seedCount++;
+      if (seedCount === period) {
+        result[i] = seedSum / period;
+        seeded = true;
+      }
+    } else {
+      result[i] = (result[i - 1] * (period - 1) + v) / period;
+    }
+  }
+  return result;
+}
+
+// Wilder's RSI: Wilder-smoothed average gain vs. average loss over `period`
+// bar-to-bar changes. Matches Pine's ta.rsi()/manual up-down-rma formula,
+// including its down==0/up==0 edge cases.
+export function computeRSI(candles: Candle[], period: number): number[] {
+  const closes = candles.map((c) => c.close);
+  const changes = closes.map((c, i) => (i === 0 ? NaN : c - closes[i - 1]));
+  const gains = changes.map((c) => (Number.isNaN(c) ? NaN : Math.max(c, 0)));
+  const losses = changes.map((c) => (Number.isNaN(c) ? NaN : Math.max(-c, 0)));
+  const up = computeRMA(gains, period);
+  const down = computeRMA(losses, period);
+  return up.map((u, i) => {
+    const d = down[i];
+    if (Number.isNaN(u) || Number.isNaN(d)) return NaN;
+    if (d === 0) return 100;
+    if (u === 0) return 0;
+    return 100 - 100 / (1 + u / d);
+  });
 }
 
 // Resamples 60-minute candles into session-anchored N-hour bars: the first

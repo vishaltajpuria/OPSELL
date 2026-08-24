@@ -6,6 +6,12 @@ type Timeframe = "day" | "4h" | "2h";
 const ALL_TIMEFRAMES: Timeframe[] = ["day", "4h", "2h"];
 const TIMEFRAME_LABEL: Record<Timeframe, string> = { day: "Daily", "4h": "4H", "2h": "2H" };
 
+type Strategy = "smaSupertrend" | "rsiDip";
+const STRATEGY_LABEL: Record<Strategy, string> = {
+  smaSupertrend: "Supertrend + SMA",
+  rsiDip: "RSI Double Dip",
+};
+
 type Trade = {
   symbol: string;
   timeframe: Timeframe;
@@ -49,6 +55,7 @@ type OptionTrade = {
 type BacktestResponse = {
   to: string;
   timeframes: Timeframe[];
+  strategy: Strategy;
   symbolCount: number;
   stopLossPercent: number | null;
   directionFilter: "short" | "long" | null;
@@ -148,6 +155,7 @@ function summarizeOptions(trades: OptionTrade[]) {
 function toStockCsv(result: BacktestResponse, trades: Trade[]): string {
   const lines: string[] = [
     "OPSELL Backtest",
+    `Strategy,${STRATEGY_LABEL[result.strategy]}`,
     `Timeframes,${result.timeframes.map((tf) => TIMEFRAME_LABEL[tf]).join(" + ")}`,
     `As of,${result.to}`,
     `Symbols,${result.symbolCount}`,
@@ -206,6 +214,7 @@ function toStockCsv(result: BacktestResponse, trades: Trade[]): string {
 function toOptionsCsv(result: BacktestResponse, trades: OptionTrade[]): string {
   const lines: string[] = [
     "OPSELL Backtest — Option-selling (MODELED, not real historical premiums)",
+    `Strategy,${STRATEGY_LABEL[result.strategy]}`,
     `Timeframes,${result.timeframes.map((tf) => TIMEFRAME_LABEL[tf]).join(" + ")}`,
     `As of,${result.to}`,
     `Symbols,${result.symbolCount}`,
@@ -510,6 +519,7 @@ function OptionResultBlock({ timeframe, trades }: { timeframe: Timeframe; trades
 
 export default function BacktestRunner() {
   const [symbolsText, setSymbolsText] = useState("");
+  const [strategy, setStrategy] = useState<Strategy>("smaSupertrend");
   const [timeframes, setTimeframes] = useState<Set<Timeframe>>(new Set(["day"]));
   const [stopLossText, setStopLossText] = useState("");
   const [directionFilter, setDirectionFilter] = useState<"both" | "short" | "long">("both");
@@ -585,9 +595,10 @@ export default function BacktestRunner() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           symbols,
+          strategy,
           timeframes: Array.from(timeframes),
           stopLossPercent,
-          directionFilter: directionFilter === "both" ? undefined : directionFilter,
+          directionFilter: strategy === "smaSupertrend" && directionFilter !== "both" ? directionFilter : undefined,
           sellOptions,
           spreadWidthPercent: sellOptions ? spreadWidthPercent : undefined,
         }),
@@ -608,13 +619,44 @@ export default function BacktestRunner() {
     <div>
       <p className="mt-1 text-xs text-muted">
         Paste NSE symbols (comma or newline separated) — stocks like RELIANCE, or indices: NIFTY, BANKNIFTY,
-        FINNIFTY, MIDCPNIFTY, SENSEX. Walk-forward simulated against the same Supertrend + SMA logic as the
-        Strategy tab. Assumptions: entry at next bar&apos;s open after a signal; exit the first bar price touches
-        the (moving) target SMA, or (if a stop loss below is set) the first bar price moves that % against entry,
-        or the first bar Supertrend flips against the trade if neither of those hit first; trades still
-        unresolved after ~90 trading days&apos; worth of bars are marked &quot;open&quot;, not counted as a win
-        or loss.
+        FINNIFTY, MIDCPNIFTY, SENSEX.
       </p>
+
+      <div className="mt-3">
+        <span className="block text-xs text-muted">Strategy</span>
+        <div className="mt-1 flex gap-2">
+          {(["smaSupertrend", "rsiDip"] as Strategy[]).map((s) => (
+            <button
+              key={s}
+              type="button"
+              onClick={() => setStrategy(s)}
+              className={`flex-1 rounded-lg border px-3 py-2 text-xs font-medium ${
+                strategy === s ? "border-accent bg-accent/10 text-accent" : "border-border bg-surface2 text-muted"
+              }`}
+            >
+              {STRATEGY_LABEL[s]}
+            </button>
+          ))}
+        </div>
+        {strategy === "smaSupertrend" ? (
+          <p className="mt-1 text-[10px] text-muted">
+            Walk-forward simulated against the same Supertrend + SMA logic as the Strategy tab. Assumptions:
+            entry at next bar&apos;s open after a signal; exit the first bar price touches the (moving) target
+            SMA, or (if a stop loss below is set) the first bar price moves that % against entry, or the first
+            bar Supertrend flips against the trade if neither of those hit first; trades still unresolved after
+            ~90 trading days&apos; worth of bars are marked &quot;open&quot;, not counted as a win or loss.
+          </p>
+        ) : (
+          <p className="mt-1 text-[10px] text-muted">
+            Long only. RSI(10) crossing above its own 10-period SMA counts as a &quot;dip&quot; while RSI is
+            still below 50 (crossing back above 50 resets the count); the 2nd such crossover (a double bottom)
+            enters at the next bar&apos;s open. Exits on the first bar Supertrend(10, 2.5) flips from an uptrend
+            to a downtrend — computed on real OHLC, not Heikin Ashi. No target exit exists in this strategy; a
+            stop loss below is optional (not part of the source script). Trades still unresolved after ~90
+            trading days&apos; worth of bars are marked &quot;open&quot;.
+          </p>
+        )}
+      </div>
 
       <textarea
         value={symbolsText}
@@ -648,23 +690,25 @@ export default function BacktestRunner() {
         </p>
       </div>
 
-      <div className="mt-3">
-        <span className="block text-xs text-muted">Direction</span>
-        <div className="mt-1 flex gap-2">
-          {(["both", "short", "long"] as const).map((d) => (
-            <button
-              key={d}
-              type="button"
-              onClick={() => setDirectionFilter(d)}
-              className={`flex-1 rounded-lg border px-3 py-2 text-xs font-medium capitalize ${
-                directionFilter === d ? "border-accent bg-accent/10 text-accent" : "border-border bg-surface2 text-muted"
-              }`}
-            >
-              {d === "both" ? "All" : `${d} only`}
-            </button>
-          ))}
+      {strategy === "smaSupertrend" && (
+        <div className="mt-3">
+          <span className="block text-xs text-muted">Direction</span>
+          <div className="mt-1 flex gap-2">
+            {(["both", "short", "long"] as const).map((d) => (
+              <button
+                key={d}
+                type="button"
+                onClick={() => setDirectionFilter(d)}
+                className={`flex-1 rounded-lg border px-3 py-2 text-xs font-medium capitalize ${
+                  directionFilter === d ? "border-accent bg-accent/10 text-accent" : "border-border bg-surface2 text-muted"
+                }`}
+              >
+                {d === "both" ? "All" : `${d} only`}
+              </button>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
       <label className="mt-3 block text-xs text-muted">
         Stop loss % from entry (optional — leave blank to use only the Supertrend-flip exit)
@@ -727,9 +771,10 @@ export default function BacktestRunner() {
         <div className="mt-5">
           <div className="flex items-center justify-between gap-3">
             <p className="text-xs text-muted">
-              {result.timeframes.map((tf) => TIMEFRAME_LABEL[tf]).join(" + ")} · {result.symbolCount} symbol
+              {STRATEGY_LABEL[result.strategy]} · {result.timeframes.map((tf) => TIMEFRAME_LABEL[tf]).join(" + ")} ·{" "}
+              {result.symbolCount} symbol
               {result.symbolCount === 1 ? "" : "s"} · as of {result.to} ·{" "}
-              {result.directionFilter ? `${result.directionFilter} only` : "both directions"} ·{" "}
+              {result.strategy === "rsiDip" ? "long only" : result.directionFilter ? `${result.directionFilter} only` : "both directions"} ·{" "}
               {result.stopLossPercent ? `${result.stopLossPercent}% stop loss` : "no stop loss"}
               {result.errors.length > 0 && ` · ${result.errors.length} error(s)`}
             </p>
@@ -768,9 +813,10 @@ export default function BacktestRunner() {
 
           <div className="mt-3 flex items-center justify-between gap-3">
             <p className="text-xs text-muted">
-              {result.timeframes.map((tf) => TIMEFRAME_LABEL[tf]).join(" + ")} · {result.symbolCount} symbol
+              {STRATEGY_LABEL[result.strategy]} · {result.timeframes.map((tf) => TIMEFRAME_LABEL[tf]).join(" + ")} ·{" "}
+              {result.symbolCount} symbol
               {result.symbolCount === 1 ? "" : "s"} · as of {result.to} ·{" "}
-              {result.directionFilter ? `${result.directionFilter} only` : "both directions"} ·{" "}
+              {result.strategy === "rsiDip" ? "long only" : result.directionFilter ? `${result.directionFilter} only` : "both directions"} ·{" "}
               {result.spreadWidthPercent ? `credit spread (short ~3% / long ~${3 + result.spreadWidthPercent}% OTM)` : "naked (uncapped)"} ·{" "}
               {result.stopLossPercent ? `${result.stopLossPercent}% underlying stop loss` : "no underlying stop loss"}
               {result.errors.length > 0 && ` · ${result.errors.length} error(s)`}

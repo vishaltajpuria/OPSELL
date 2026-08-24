@@ -5,6 +5,7 @@ import { getEquityToken, getIndexToken } from "@/lib/nseInstruments";
 import { INDEX_DEFS } from "@/lib/indices";
 import { resampleTo4H, resampleTo2H } from "@/lib/indicators";
 import { backtestSymbol, type BacktestTrade } from "@/lib/backtest";
+import { backtestRsiDip } from "@/lib/rsiDipBacktest";
 import { toOptionTrade, type OptionTrade } from "@/lib/optionsBacktest";
 import { runRateLimited } from "@/lib/rateLimit";
 
@@ -14,6 +15,8 @@ const INDEX_BY_KEY = new Map(INDEX_DEFS.map((d) => [d.key, d]));
 
 type Timeframe = "day" | "4h" | "2h";
 const ALL_TIMEFRAMES: Timeframe[] = ["day", "4h", "2h"];
+
+type Strategy = "smaSupertrend" | "rsiDip";
 
 // Kite's historical-data endpoint caps "day"-interval requests to ~2000
 // days; 1980 stays under that with a safety margin. After the ~210-bar
@@ -71,10 +74,16 @@ export async function POST(request: NextRequest) {
   const timeframes = Array.from(new Set(timeframesRaw.filter((t): t is Timeframe => ALL_TIMEFRAMES.includes(t as Timeframe))));
   if (timeframes.length === 0) timeframes.push("day");
 
+  const strategy: Strategy = body?.strategy === "rsiDip" ? "rsiDip" : "smaSupertrend";
+
   const stopLossPercent =
     typeof body?.stopLossPercent === "number" && body.stopLossPercent > 0 ? body.stopLossPercent : undefined;
+  // Direction filter only means anything for smaSupertrend — the RSI dip
+  // strategy is long-only by construction (there's no short signal to filter).
   const directionFilter =
-    body?.directionFilter === "short" || body?.directionFilter === "long" ? body.directionFilter : undefined;
+    strategy === "smaSupertrend" && (body?.directionFilter === "short" || body?.directionFilter === "long")
+      ? body.directionFilter
+      : undefined;
   const sellOptions = body?.sellOptions === true;
   const spreadWidthPercent =
     typeof body?.spreadWidthPercent === "number" && body.spreadWidthPercent > 0 ? body.spreadWidthPercent : undefined;
@@ -114,7 +123,10 @@ export async function POST(request: NextRequest) {
       const rawCandles: Candle[] = await getHistoricalCandles(token, config.interval, from, to, accessToken);
       const candles = config.resample ? config.resample(rawCandles) : rawCandles;
       const maxHoldBars = BASE_MAX_HOLD_BARS * config.barsPerDay;
-      const stockTrades = backtestSymbol(symbol, candles, { stopLossPercent, directionFilter, maxHoldBars });
+      const stockTrades =
+        strategy === "rsiDip"
+          ? backtestRsiDip(symbol, candles, { stopLossPercent, maxHoldBars })
+          : backtestSymbol(symbol, candles, { stopLossPercent, directionFilter, maxHoldBars });
 
       if (!sellOptions) {
         return stockTrades.map((t) => ({ ...t, timeframe })) as TimeframedTrade[];
@@ -136,6 +148,7 @@ export async function POST(request: NextRequest) {
   return NextResponse.json({
     to,
     timeframes,
+    strategy,
     symbolCount: symbols.length,
     stopLossPercent: stopLossPercent ?? null,
     directionFilter: directionFilter ?? null,
