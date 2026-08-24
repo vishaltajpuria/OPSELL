@@ -1,7 +1,8 @@
 import { redirect } from "next/navigation";
 import { isConnected } from "@/lib/session";
-import { getPaperTrades } from "@/lib/kv";
+import { getPaperTrades, getCapitalBase } from "@/lib/kv";
 import { computePerformance } from "@/lib/performance";
+import CapitalBaseEditor from "@/components/CapitalBaseEditor";
 
 export const dynamic = "force-dynamic";
 
@@ -22,8 +23,8 @@ export default async function PerformancePage() {
   let error: string | null = null;
   let summary: ReturnType<typeof computePerformance> | null = null;
   try {
-    const trades = await getPaperTrades();
-    summary = computePerformance(trades);
+    const [trades, capitalBase] = await Promise.all([getPaperTrades(), getCapitalBase()]);
+    summary = computePerformance(trades, capitalBase);
   } catch (err) {
     error = err instanceof Error ? err.message : "Failed to load performance data.";
   }
@@ -40,6 +41,22 @@ export default async function PerformancePage() {
 
       {error && (
         <p className="mt-4 rounded-lg border border-danger/40 bg-danger/10 p-3 text-sm text-danger">{error}</p>
+      )}
+
+      {!error && summary && (
+        <div className="mt-4 rounded-xl border border-border bg-surface p-4">
+          <p className="text-xs text-muted">Portfolio value</p>
+          <p className="mt-1 text-2xl font-semibold">₹{fmt(summary.currentPortfolioValue)}</p>
+          <p className="mt-1 text-[11px] text-muted">
+            ₹{fmt(summary.capitalBase)} base {summary.overall.totalPnl >= 0 ? "+" : ""}
+            ₹{signedFmt(summary.overall.totalPnl)} realized
+            {summary.openPositionsUnrealizedPnl !== 0 &&
+              ` ${summary.openPositionsUnrealizedPnl >= 0 ? "+" : ""}₹${signedFmt(summary.openPositionsUnrealizedPnl)} unrealized`}
+          </p>
+          <div className="mt-2">
+            <CapitalBaseEditor capitalBase={summary.capitalBase} />
+          </div>
+        </div>
       )}
 
       {!error && summary && summary.overall.tradeCount === 0 && (
@@ -63,6 +80,10 @@ export default async function PerformancePage() {
               </span>
               <span className="text-muted">Capital deployed</span>
               <span className="text-right font-medium">₹{fmt(summary.overall.totalCapital)}</span>
+              <span className="text-muted">Return on ₹{fmt(summary.capitalBase)} base</span>
+              <span className={`text-right font-medium ${summary.overall.returnOnBasePercent >= 0 ? "text-accent" : "text-danger"}`}>
+                {signedFmt(summary.overall.returnOnBasePercent, 2)}%
+              </span>
               <span className="text-muted">Closed trades</span>
               <span className="text-right font-medium">
                 {summary.overall.tradeCount} ({summary.overall.wins}W / {summary.overall.losses}L)
@@ -82,6 +103,18 @@ export default async function PerformancePage() {
               </p>
             )}
           </div>
+
+          <h2 className="mt-5 text-xs font-semibold uppercase tracking-wide text-muted">Portfolio value (₹{fmt(summary.capitalBase)} base)</h2>
+          <ul className="mt-2 divide-y divide-border overflow-hidden rounded-xl border border-border">
+            {summary.portfolioValue.map((p) => (
+              <li key={p.month} className="bg-surface px-4 py-3">
+                <div className="flex items-center justify-between">
+                  <span className="font-medium">{monthLabel(p.month)}</span>
+                  <span className="text-sm font-semibold">₹{fmt(p.value)}</span>
+                </div>
+              </li>
+            ))}
+          </ul>
 
           <h2 className="mt-5 text-xs font-semibold uppercase tracking-wide text-muted">Capital growth (cumulative P&L)</h2>
           <ul className="mt-2 divide-y divide-border overflow-hidden rounded-xl border border-border">
@@ -115,8 +148,8 @@ export default async function PerformancePage() {
                   </span>
                 </div>
                 <div className="mt-1 text-[11px] text-muted">
-                  ₹{signedFmt(m.totalPnl)} on ₹{fmt(m.totalCapital)} capital · {m.tradeCount} trade{m.tradeCount === 1 ? "" : "s"} (
-                  {m.wins}W / {m.losses}L)
+                  ₹{signedFmt(m.totalPnl)} on ₹{fmt(m.totalCapital)} capital ({signedFmt(m.returnOnBasePercent, 2)}% of base) ·{" "}
+                  {m.tradeCount} trade{m.tradeCount === 1 ? "" : "s"} ({m.wins}W / {m.losses}L)
                   {m.unknownCapitalCount > 0 && ` · ${m.unknownCapitalCount} excluded (no capital figure)`}
                 </div>
               </li>

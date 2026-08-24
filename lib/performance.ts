@@ -10,11 +10,15 @@ export type MonthlyPerformance = {
   totalCapital: number; // ₹, sum of capitalReleased across events this month that have one
   unknownCapitalCount: number; // events this month with no capital figure — excluded from totalCapital/returnPercent
   returnPercent: number | null; // totalPnl / totalCapital * 100 — null if no event this month has a known capital figure
+  returnOnBasePercent: number; // totalPnl / capitalBase * 100 — always known, since the base is a fixed setting
 };
 
 export type PerformanceSummary = {
   monthly: MonthlyPerformance[]; // ascending by month
   cumulativePnl: { month: string; cumulative: number }[]; // running total realized P&L, same order as monthly
+  // capitalBase + cumulative realized P&L at the end of each month — a view
+  // of the whole book's value growing over time, same order as monthly.
+  portfolioValue: { month: string; value: number }[];
   overall: {
     tradeCount: number;
     wins: number;
@@ -23,11 +27,16 @@ export type PerformanceSummary = {
     totalCapital: number;
     unknownCapitalCount: number;
     returnPercent: number | null;
+    returnOnBasePercent: number;
   };
   // Current mark-to-market of still-open lots across all positions — shown
   // separately, not folded into any month's return, since it isn't
   // realized yet and can still move either way before actually closing.
   openPositionsUnrealizedPnl: number;
+  capitalBase: number;
+  // capitalBase + all realized P&L to date + current open positions'
+  // unrealized P&L — the single "what's my book worth right now" number.
+  currentPortfolioValue: number;
 };
 
 /**
@@ -47,8 +56,13 @@ export type PerformanceSummary = {
  * portfolio size assumed anywhere — "capital deployed" for a month is just
  * whatever capital the events that closed that month actually released,
  * summed.
+ *
+ * capitalBase is a separate, fixed reference point (see getCapitalBase in
+ * lib/kv.ts) used only to express returns as a % of the whole book instead
+ * of just the capital that happened to be at risk — it never affects the
+ * capital-weighted returnPercent figures above.
  */
-export function computePerformance(trades: PaperTrade[]): PerformanceSummary {
+export function computePerformance(trades: PaperTrade[], capitalBase: number): PerformanceSummary {
   const events: ClosedLot[] = trades.flatMap((t) => t.closedLots);
 
   const byMonth = new Map<string, ClosedLot[]>();
@@ -82,6 +96,7 @@ export function computePerformance(trades: PaperTrade[]): PerformanceSummary {
         totalCapital,
         unknownCapitalCount,
         returnPercent: totalCapital > 0 ? (totalPnl / totalCapital) * 100 : null,
+        returnOnBasePercent: (totalPnl / capitalBase) * 100,
       };
     });
 
@@ -90,6 +105,7 @@ export function computePerformance(trades: PaperTrade[]): PerformanceSummary {
     running += m.totalPnl;
     return { month: m.month, cumulative: running };
   });
+  const portfolioValue = cumulativePnl.map((c) => ({ month: c.month, value: capitalBase + c.cumulative }));
 
   const overallBase = monthly.reduce(
     (acc, m) => ({
@@ -113,7 +129,14 @@ export function computePerformance(trades: PaperTrade[]): PerformanceSummary {
   return {
     monthly,
     cumulativePnl,
-    overall: { ...overallBase, returnPercent: overallBase.totalCapital > 0 ? (overallBase.totalPnl / overallBase.totalCapital) * 100 : null },
+    portfolioValue,
+    overall: {
+      ...overallBase,
+      returnPercent: overallBase.totalCapital > 0 ? (overallBase.totalPnl / overallBase.totalCapital) * 100 : null,
+      returnOnBasePercent: (overallBase.totalPnl / capitalBase) * 100,
+    },
     openPositionsUnrealizedPnl,
+    capitalBase,
+    currentPortfolioValue: capitalBase + overallBase.totalPnl + openPositionsUnrealizedPnl,
   };
 }

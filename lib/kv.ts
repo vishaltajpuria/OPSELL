@@ -222,3 +222,24 @@ export async function getPaperTrades(): Promise<PaperTrade[]> {
 export async function savePaperTrades(trades: PaperTrade[]): Promise<void> {
   await getRedis().set(PAPER_TRADES_KEY, trades);
 }
+
+const CAPITAL_BASE_KEY = "papertrades:capitalBase";
+const DEFAULT_CAPITAL_BASE = 5_000_000; // ₹50 lakh — the starting paper-trading capital base
+
+/**
+ * The capital base paper-trading performance is measured against — a
+ * "return on capital deployed" (per trade/month) doesn't need one, but a
+ * portfolio-level return (this month's P&L as a % of your whole book, not
+ * just whatever you happened to have in the market) does. Defaults to ₹50
+ * lakh with no explicit setup needed; editable later (Performance tab)
+ * since a "starting" base is exactly that — a starting point, not
+ * necessarily permanent.
+ */
+export async function getCapitalBase(): Promise<number> {
+  const v = await getRedis().get<number>(CAPITAL_BASE_KEY);
+  return typeof v === "number" && v > 0 ? v : DEFAULT_CAPITAL_BASE;
+}
+
+export async function setCapitalBase(amount: number): Promise<void> {
+  await getRedis().set(CAPITAL_BASE_KEY, amount);
+}
