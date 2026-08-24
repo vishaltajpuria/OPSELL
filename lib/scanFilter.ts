@@ -3,12 +3,14 @@ import { batchQuote } from "@/lib/quoteBatch";
 import type { Quote } from "@/lib/kite";
 
 // Keeps even a single, unbatched pass comfortably under Vercel's 60s cap at
-// Kite's 3 req/sec historical-data limit (~27s for 80 symbols, vs. ~62s for
-// the full ~185-stock F&O universe) — while still covering the most liquid/
-// active third-to-half of it: the segment where a reversal signal is both
-// more reliable (less noise from thin trading) and actually tradable as an
-// option (real open interest to sell into).
-export const TOP_N = 80;
+// Kite's 3 req/sec historical-data limit (~33s for 100 symbols, vs. ~70s for
+// the full ~209-stock F&O universe) — while still covering roughly half of
+// it: the segment where a reversal signal is both more reliable (less noise
+// from thin trading) and actually tradable as an option (real open interest
+// to sell into). 100 rather than a tighter cut because the margin at 80 was
+// too thin in practice — a stock as liquid as Bajaj Auto landed just outside
+// it (rank 87/209) even after fixing the raw-share-count ranking bug.
+export const TOP_N = 100;
 
 export type ScanCandidateInputs = {
   name: string;

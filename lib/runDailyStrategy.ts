@@ -25,7 +25,7 @@ function isoDate(d: Date): string {
 
 // Splits a stock list into BATCH_IDS.length roughly-equal slices. Vercel
 // Hobby hard-caps a function at 60s regardless of maxDuration, and at
-// Kite's 3 req/sec historical-data limit the full ~185-stock universe takes
+// Kite's 3 req/sec historical-data limit the full ~209-stock universe takes
 // ~62s for one timeframe alone — over that cap even before this function's
 // caller narrows the list down with selectScanCandidates (see below).
 // Running each slice as its own scheduled/manual invocation (see the two
@@ -55,7 +55,7 @@ export type StrategyRunResult = {
  * in-app "Run now" button, which calls every batch of every timeframe in
  * sequence to cover the full list.
  *
- * The full ~185-stock F&O universe is narrowed to the most promising ~80
+ * The full ~209-stock F&O universe is narrowed to the most promising ~100
  * candidates first (see selectScanCandidates in lib/scanFilter.ts) before
  * any historical candles are fetched — this strategy is a reversal play, so
  * a signal on a stock nobody's actually trading today isn't worth much
