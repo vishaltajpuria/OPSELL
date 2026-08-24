@@ -1,6 +1,7 @@
 import { getHistoricalCandles } from "@/lib/kite";
 import { saveSignalBatch, BATCH_IDS, type BatchId, type StoredSignal } from "@/lib/kv";
 import { listFnoStocks, type FnoStock } from "@/lib/instruments";
+import { selectScanCandidates } from "@/lib/scanFilter";
 import { getEquityToken, getIndexToken } from "@/lib/nseInstruments";
 import { INDEX_DEFS } from "@/lib/indices";
 import { resampleTo4H } from "@/lib/indicators";
@@ -17,14 +18,14 @@ function isoDate(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
-// Splits the full F&O stock list into BATCH_IDS.length roughly-equal
-// slices. Vercel Hobby hard-caps a function at 60s regardless of
-// maxDuration, and at Kite's 3 req/sec historical-data limit the full
-// ~185-stock universe takes ~62s for one timeframe alone — over that cap.
+// Splits a stock list into BATCH_IDS.length roughly-equal slices. Vercel
+// Hobby hard-caps a function at 60s regardless of maxDuration, and at
+// Kite's 3 req/sec historical-data limit the full ~185-stock universe takes
+// ~62s for one timeframe alone — over that cap even before this function's
+// caller narrows the list down with selectScanCandidates (see below).
 // Running each slice as its own scheduled/manual invocation (see the two
 // exported functions below, and the batch-aware routes that call them)
-// keeps every individual invocation comfortably under budget while still
-// covering the whole list, rather than permanently dropping stocks.
+// keeps every individual invocation comfortably under budget.
 function partitionForBatch(stocks: FnoStock[], batchId: BatchId): FnoStock[] {
   const idx = BATCH_IDS.indexOf(batchId);
   const n = BATCH_IDS.length;
@@ -49,6 +50,12 @@ export type StrategyRunResult = {
  * in-app "Run now" button, which calls every batch of every timeframe in
  * sequence to cover the full list.
  *
+ * The full ~185-stock F&O universe is narrowed to the most promising ~80
+ * candidates first (see selectScanCandidates in lib/scanFilter.ts) before
+ * any historical candles are fetched — this strategy is a reversal play, so
+ * a signal on a stock nobody's actually trading today isn't worth much
+ * anyway, and it's what keeps each batch comfortably inside Vercel's 60s cap.
+ *
  * (Stocks run on spot rather than near-month futures — that was tried and
  * reverted, since Kite's continuous=1 futures data is a raw, non-back-
  * adjusted concatenation of monthly contracts that corrupts the ATR/
@@ -62,7 +69,8 @@ export async function runDailyTimeframeStrategy(
   const to = isoDate(now);
   const fromDaily = isoDate(new Date(now.getTime() - DAILY_LOOKBACK_DAYS * DAY_MS));
 
-  const stocks = partitionForBatch(await listFnoStocks(accessToken), batchId);
+  const candidates = await selectScanCandidates(await listFnoStocks(accessToken), accessToken);
+  const stocks = partitionForBatch(candidates, batchId);
   const signals: StoredSignal[] = [];
   const errors: string[] = [];
 
@@ -130,7 +138,8 @@ export async function run4HTimeframeStrategy(accessToken: string, batchId: Batch
   const to = isoDate(now);
   const fromHourly = isoDate(new Date(now.getTime() - HOURLY_LOOKBACK_DAYS * DAY_MS));
 
-  const stocks = partitionForBatch(await listFnoStocks(accessToken), batchId);
+  const candidates = await selectScanCandidates(await listFnoStocks(accessToken), accessToken);
+  const stocks = partitionForBatch(candidates, batchId);
   const signals: StoredSignal[] = [];
   const errors: string[] = [];
 
