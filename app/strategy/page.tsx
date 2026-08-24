@@ -18,6 +18,20 @@ function signalLabel(s: StoredSignal): string {
   return isSuper ? `Super ${base}` : base;
 }
 
+// % distance from entry to the target SMA — the maximum move the setup is
+// pointing at. Signals are sorted by this, largest first, rather than
+// hard-filtered by direction or label: backtesting the "Super" label
+// against 3 years of real trades showed Super Short/Long actually
+// underperform regular Short/Long (lower win rate AND lower avg P&L — a
+// "Super" signal fires later, once the move has already run further, not on
+// a stronger setup), so that's not used as a filter. A hard cutoff on this
+// gap % would also arbitrarily hide otherwise-fine setups on a quiet day;
+// sorting keeps everything visible while surfacing the most promising ones
+// first.
+function targetGapPercent(s: StoredSignal): number {
+  return (Math.abs(s.targetSma.value - s.entryPrice) / s.entryPrice) * 100;
+}
+
 export default async function StrategyPage() {
   if (!isConnected()) redirect("/settings");
 
@@ -77,7 +91,9 @@ export default async function StrategyPage() {
 
           <div className="mt-4 grid grid-cols-2 gap-3">
             {(["1D", "4H"] as const).map((timeframe) => {
-              const rows = latest.signals.filter((s) => s.timeframe === timeframe);
+              const rows = latest.signals
+                .filter((s) => s.timeframe === timeframe)
+                .sort((a, b) => targetGapPercent(b) - targetGapPercent(a));
               return (
                 <div key={timeframe}>
                   <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">
@@ -98,7 +114,7 @@ export default async function StrategyPage() {
                         <p className="mt-1 text-[11px] text-muted">
                           Entry {fmt(s.entryPrice)}
                           <br />
-                          Target {fmt(s.targetSma.value)}
+                          Target {fmt(s.targetSma.value)} ({targetGapPercent(s).toFixed(1)}%)
                         </p>
                       </li>
                     ))}
