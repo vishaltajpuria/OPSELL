@@ -7,9 +7,10 @@ import { getPaperTrades, savePaperTrades, type PaperTrade } from "@/lib/kv";
 
 // Opens a brand-new paper trade. Re-resolves the trade plan fresh (same as
 // /preview) rather than trusting anything the client sends beyond
-// symbol/direction/mode/lots, so the recorded entry premium is always a
-// just-fetched live price, not a stale one from whenever the user was
-// looking at the preview screen.
+// symbol/direction/mode/lots/strike(s), so the recorded entry premium is
+// always a just-fetched live price, not a stale one from whenever the user
+// was looking at the preview screen — the strike(s), if given, pin WHICH
+// contract to price fresh, not what its price is.
 //
 // Refuses to open a second position for a (symbol, mode) that already has
 // one open — /preview should have routed the client to /increase instead,
@@ -33,13 +34,14 @@ export async function POST(request: NextRequest) {
       { status: 400 }
     );
   }
-  // Same optional manual-strikes override as /preview — passed through here
-  // too so the strikes that actually get confirmed match whatever the user
-  // reviewed on the preview screen, rather than re-picking automatically at
-  // confirm time (spot can move between preview and confirm).
+  // Same optional manual-strikes override as /preview (single strike for
+  // buy mode, a pair for sell mode) — passed through here too so the
+  // strikes that actually get confirmed match whatever the user reviewed
+  // on the preview screen, rather than re-picking automatically at confirm
+  // time (spot can move between preview and confirm).
   const manualStrikes =
-    typeof body?.shortStrike === "number" && typeof body?.longStrike === "number"
-      ? { short: body.shortStrike, long: body.longStrike }
+    typeof body?.shortStrike === "number"
+      ? { short: body.shortStrike, long: typeof body?.longStrike === "number" ? body.longStrike : undefined }
       : undefined;
 
   try {

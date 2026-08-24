@@ -110,6 +110,7 @@ function StrikePicker({
   chainRows,
   chainStatus,
   chainError,
+  shortLabel,
   shortStrike,
   longStrike,
   onPick,
@@ -118,9 +119,10 @@ function StrikePicker({
   chainRows: ChainPickerRow[] | null;
   chainStatus: "idle" | "loading" | "error";
   chainError: string | null;
+  shortLabel: string; // "Strike" for a naked buy, "Short leg (sell)" for a spread
   shortStrike: number;
-  longStrike: number;
-  onPick: (shortStrike: number, longStrike: number) => void;
+  longStrike?: number; // omit for buy mode — single leg, nothing to protect
+  onPick: (shortStrike: number, longStrike?: number) => void;
 }) {
   if (chainStatus === "loading") return <p className="mt-2 text-[11px] text-muted">Loading option chain…</p>;
   if (chainStatus === "error") return <p className="mt-2 text-[11px] text-danger">{chainError}</p>;
@@ -132,7 +134,7 @@ function StrikePicker({
   return (
     <div className="mt-2 rounded-lg border border-border bg-surface2 p-2.5">
       <label className="block text-[11px]">
-        Short leg (sell)
+        {shortLabel}
         <select
           value={shortStrike}
           onChange={(e) => onPick(Number(e.target.value), longStrike)}
@@ -145,20 +147,22 @@ function StrikePicker({
           ))}
         </select>
       </label>
-      <label className="mt-2 block text-[11px]">
-        Long leg (buy, protective)
-        <select
-          value={longStrike}
-          onChange={(e) => onPick(shortStrike, Number(e.target.value))}
-          className="mt-1 w-full rounded-lg border border-border bg-surface p-1.5 text-xs text-foreground"
-        >
-          {rows.map((r) => (
-            <option key={r.strike} value={r.strike}>
-              {strikeOptionLabel(r.strike, r[side])}
-            </option>
-          ))}
-        </select>
-      </label>
+      {longStrike !== undefined && (
+        <label className="mt-2 block text-[11px]">
+          Long leg (buy, protective)
+          <select
+            value={longStrike}
+            onChange={(e) => onPick(shortStrike, Number(e.target.value))}
+            className="mt-1 w-full rounded-lg border border-border bg-surface p-1.5 text-xs text-foreground"
+          >
+            {rows.map((r) => (
+              <option key={r.strike} value={r.strike}>
+                {strikeOptionLabel(r.strike, r[side])}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
     </div>
   );
 }
@@ -207,17 +211,24 @@ export default function PaperTradeCandidates({
     }
   }
 
-  // Re-prices the plan for a specific pair of strikes the user picked —
-  // still a live server-side quote, same as the initial preview, just
-  // pinned to the chosen legs instead of the auto-picked ones.
-  async function repriceWithStrikes(shortStrike: number, longStrike: number) {
+  // Re-prices the plan for a specific strike (buy mode) or pair of strikes
+  // (sell mode) the user picked — still a live server-side quote, same as
+  // the initial preview, just pinned to the chosen leg(s) instead of the
+  // auto-picked one(s).
+  async function repriceWithStrikes(shortStrike: number, longStrike?: number) {
     if (!preview) return;
     setPreview({ ...preview, status: "loading" });
     try {
       const res = await fetch("/api/papertrade/preview", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ symbol: preview.symbol, direction: preview.direction, mode: preview.mode, shortStrike, longStrike }),
+        body: JSON.stringify({
+          symbol: preview.symbol,
+          direction: preview.direction,
+          mode: preview.mode,
+          shortStrike,
+          ...(longStrike !== undefined ? { longStrike } : {}),
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Failed to price those strikes.");
@@ -244,12 +255,13 @@ export default function PaperTradeCandidates({
             direction: preview.direction,
             mode: preview.mode,
             lots,
-            // Lock in exactly the strikes just previewed (auto-picked or
+            // Lock in exactly the strike(s) just previewed (auto-picked or
             // manually chosen) rather than letting /start re-pick fresh
             // ones — spot can move between preview and confirm, and the
             // whole point of choosing strikes yourself is that what you
             // confirm should be what you saw.
-            ...(preview.mode === "sell" ? { shortStrike: preview.plan.shortLeg.strike, longStrike: preview.plan.longLeg?.strike } : {}),
+            shortStrike: preview.plan.shortLeg.strike,
+            ...(preview.plan.longLeg ? { longStrike: preview.plan.longLeg.strike } : {}),
           };
       const res = await fetch(endpoint, {
         method: "POST",
@@ -313,10 +325,31 @@ export default function PaperTradeCandidates({
               </p>
               <p>Underlying {fmt(preview.plan.underlyingPrice)}</p>
               {preview.mode === "buy" ? (
-                <p>
-                  Buy {legLabel(preview.plan.shortLeg)} @ {fmt(preview.plan.shortLeg.premium)} · lot size{" "}
-                  {preview.plan.shortLeg.lotSize}
-                </p>
+                <>
+                  <p>
+                    Buy {legLabel(preview.plan.shortLeg)} @ {fmt(preview.plan.shortLeg.premium)} · lot size{" "}
+                    {preview.plan.shortLeg.lotSize}
+                  </p>
+                  {!preview.showPicker && (
+                    <button
+                      onClick={openStrikePicker}
+                      className="mt-1 text-[11px] text-accent underline decoration-dotted"
+                    >
+                      Choose strike myself
+                    </button>
+                  )}
+                  {preview.showPicker && (
+                    <StrikePicker
+                      optionType={preview.plan.shortLeg.optionType}
+                      chainRows={preview.chainRows}
+                      chainStatus={preview.chainStatus}
+                      chainError={preview.chainError}
+                      shortLabel="Strike"
+                      shortStrike={preview.plan.shortLeg.strike}
+                      onPick={repriceWithStrikes}
+                    />
+                  )}
+                </>
               ) : (
                 preview.plan.longLeg && (
                   <>
@@ -339,6 +372,7 @@ export default function PaperTradeCandidates({
                         chainRows={preview.chainRows}
                         chainStatus={preview.chainStatus}
                         chainError={preview.chainError}
+                        shortLabel="Short leg (sell)"
                         shortStrike={preview.plan.shortLeg.strike}
                         longStrike={preview.plan.longLeg.strike}
                         onPick={repriceWithStrikes}

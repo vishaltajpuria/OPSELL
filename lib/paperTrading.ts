@@ -149,20 +149,24 @@ export type TradePlan = {
  * expected move — long (expecting a reversal UP) buys a call, short
  * (expecting a reversal DOWN) buys a put — at the current month's ATM
  * strike, or next month's if fewer than 12 trading sessions remain in the
- * current month (see pickMonthlyExpiry). This is deliberately the OPPOSITE
- * mapping from "sell" mode, which is a mean-reversion premium-collection
- * bet (long signal sells a put betting price won't fall through it, short
- * sells a call betting it won't rise through it — matching
- * lib/optionsBacktest.ts's toOptionTrade), not a directional one.
+ * current month (see pickMonthlyExpiry), or manualStrikes.short if given.
+ * This is deliberately the OPPOSITE mapping from "sell" mode, which is a
+ * mean-reversion premium-collection bet (long signal sells a put betting
+ * price won't fall through it, short sells a call betting it won't rise
+ * through it — matching lib/optionsBacktest.ts's toOptionTrade), not a
+ * directional one.
  *
  * "sell" builds a credit spread: the short leg ~1% OTM, a protective long
  * leg at least 4% OTM (naturally landing near 4-5% given typical NSE strike
- * spacing — see pickOtmAtLeast) — or, if manualStrikes is given, exactly
- * the strikes the user chose instead of the auto-picked ones (see the
- * option chain's bid/ask/mid in ChainLeg — a wide-spread strike's last
- * traded price can be badly stale, which is exactly why picking strikes
- * yourself off the live chain is offered as an alternative to the
- * automatic picker).
+ * spacing — see pickOtmAtLeast) — or, if manualStrikes is given (both
+ * short and long), exactly the strikes the user chose instead of the
+ * auto-picked ones.
+ *
+ * manualStrikes (either mode) lets the caller override the auto-picked
+ * strike(s) with ones chosen off the live chain's bid/ask/mid (ChainLeg) —
+ * a wide-spread or illiquid strike's last traded price can be badly stale,
+ * which is exactly why picking strikes yourself is offered as an
+ * alternative to the automatic picker.
  *
  * Premiums throughout use quoteMidPrice (bid/ask mid), not last_price —
  * the last trade on an illiquid or far-OTM strike can be hours old at a
@@ -173,7 +177,7 @@ export async function buildTradePlan(
   symbol: string,
   direction: "short" | "long",
   mode: "buy" | "sell",
-  manualStrikes?: { short: number; long: number }
+  manualStrikes?: { short: number; long?: number }
 ): Promise<TradePlan> {
   const expiries = await getOptionExpiries(symbol);
   const expiryChoice = pickMonthlyExpiry(expiries, new Date());
@@ -192,9 +196,17 @@ export async function buildTradePlan(
   if (mode === "buy") {
     const optionType: "CE" | "PE" = direction === "long" ? "CE" : "PE";
     const side = optionType === "CE" ? "call" : "put";
-    const atmRow = pickClosestStrike(chain.rows, spot, side);
+    const atmRow = manualStrikes
+      ? chain.rows.find((r) => r.strike === manualStrikes.short) ?? null
+      : pickClosestStrike(chain.rows, spot, side);
     const leg = atmRow ? legOf(atmRow, side) : null;
-    if (!atmRow || !leg) throw new Error(`No ${side} strikes found near the money for ${symbol}.`);
+    if (!atmRow || !leg) {
+      throw new Error(
+        manualStrikes
+          ? `Couldn't find strike ${manualStrikes.short} as a ${side} for ${symbol}.`
+          : `No ${side} strikes found near the money for ${symbol}.`
+      );
+    }
     return {
       symbol,
       direction,
@@ -213,9 +225,10 @@ export async function buildTradePlan(
   const side = optionType === "CE" ? "call" : "put";
   let shortRow: ChainRow | null;
   let longRow: ChainRow | null;
-  if (manualStrikes) {
+  if (manualStrikes && typeof manualStrikes.long === "number") {
+    const long = manualStrikes.long;
     shortRow = chain.rows.find((r) => r.strike === manualStrikes.short) ?? null;
-    longRow = chain.rows.find((r) => r.strike === manualStrikes.long) ?? null;
+    longRow = chain.rows.find((r) => r.strike === long) ?? null;
   } else {
     const shortTarget = side === "call" ? spot * (1 + SHORT_LEG_OTM_PERCENT / 100) : spot * (1 - SHORT_LEG_OTM_PERCENT / 100);
     shortRow = pickClosestStrike(chain.rows, shortTarget, side);
