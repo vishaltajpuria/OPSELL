@@ -8,7 +8,7 @@ import type { Quote } from "@/lib/kite";
 // active third-to-half of it: the segment where a reversal signal is both
 // more reliable (less noise from thin trading) and actually tradable as an
 // option (real open interest to sell into).
-const TOP_N = 80;
+export const TOP_N = 80;
 
 export type ScanCandidateInputs = {
   name: string;
@@ -26,12 +26,20 @@ function percentileRanks(values: number[]): number[] {
   });
 }
 
+export type ScannedCandidate = ScanCandidateInputs & {
+  oiPercentile: number;
+  volPercentile: number;
+  movePercentile: number;
+  score: number;
+  rank: number; // 1-based, 1 = highest score
+};
+
 /**
- * Ranks candidates by a weighted blend of three cross-sectional percentiles
- * (each stock ranked against the others in the same batch, not its own
- * history — a true "volume vs. its own 20-day average" spike detector would
- * need a stored historical baseline, not attempted here) and returns the
- * top `topN`:
+ * Ranks EVERY candidate (not just the survivors) by a weighted blend of
+ * three cross-sectional percentiles (each stock ranked against the others
+ * in the same batch, not its own history — a true "volume vs. its own
+ * 20-day average" spike detector would need a stored historical baseline,
+ * not attempted here):
  *  - near-month futures open interest, 40% — a liquidity floor: a reversal
  *    signal on a name with no real option liquidity isn't tradable anyway.
  *  - today's futures volume, 30% — today's F&O trading activity.
@@ -39,31 +47,41 @@ function percentileRanks(values: number[]): number[] {
  * Volume and price movement together are the cheap, same-day proxy for
  * "something unusual is happening" (climax/exhaustion-style activity) that
  * tends to precede or accompany a genuine reversal — without needing a
- * historical baseline per stock.
+ * historical baseline per stock. Returned sorted best-to-worst with rank
+ * attached, so a caller can look up exactly where one stock landed and why
+ * (see the debug route) rather than only getting a pass/fail cut.
  */
-export function rankScanCandidates(inputs: ScanCandidateInputs[], topN: number): string[] {
+export function rankAllCandidates(inputs: ScanCandidateInputs[]): ScannedCandidate[] {
   const oiRanks = percentileRanks(inputs.map((r) => r.oi));
   const volRanks = percentileRanks(inputs.map((r) => r.futVolume));
   const moveRanks = percentileRanks(inputs.map((r) => r.pctMove));
 
   return inputs
-    .map((r, i) => ({ name: r.name, score: 0.4 * oiRanks[i] + 0.3 * volRanks[i] + 0.3 * moveRanks[i] }))
+    .map((r, i) => ({
+      ...r,
+      oiPercentile: oiRanks[i],
+      volPercentile: volRanks[i],
+      movePercentile: moveRanks[i],
+      score: 0.4 * oiRanks[i] + 0.3 * volRanks[i] + 0.3 * moveRanks[i],
+    }))
     .sort((a, b) => b.score - a.score)
+    .map((r, i) => ({ ...r, rank: i + 1 }));
+}
+
+/** Same ranking, just the names of the top `topN` — what selectScanCandidates uses. */
+export function rankScanCandidates(inputs: ScanCandidateInputs[], topN: number): string[] {
+  return rankAllCandidates(inputs)
     .slice(0, topN)
     .map((r) => r.name);
 }
 
 /**
- * Narrows the full F&O stock list down to the TOP_N most promising
- * candidates for this reversal strategy, using only cheap batched /quote
- * snapshots (one call for spot, one for futures) — NOT the per-symbol
- * historical-candle endpoint that's actually responsible for the 60s
- * budget problem this exists to solve. See rankScanCandidates for the
- * scoring itself.
+ * Fetches the cheap batched /quote data (spot + near-month futures) behind
+ * the scan filter and shapes it into per-stock inputs — shared by
+ * selectScanCandidates and the debug route, so both score every stock
+ * identically.
  */
-export async function selectScanCandidates(stocks: FnoStock[], accessToken: string): Promise<FnoStock[]> {
-  if (stocks.length <= TOP_N) return stocks;
-
+export async function computeScanInputs(stocks: FnoStock[], accessToken: string): Promise<ScanCandidateInputs[]> {
   const [futuresMap, spotQuotes] = await Promise.all([
     getNearMonthFutures(accessToken),
     batchQuote(
@@ -76,7 +94,7 @@ export async function selectScanCandidates(stocks: FnoStock[], accessToken: stri
     accessToken
   );
 
-  const inputs: ScanCandidateInputs[] = stocks.map((s) => {
+  return stocks.map((s) => {
     const future = futuresMap.get(s.name);
     const futureQuote = future ? futureQuotes[`NFO:${future.tradingsymbol}`] : undefined;
     const spot = spotQuotes[`NSE:${s.name}`];
@@ -89,7 +107,19 @@ export async function selectScanCandidates(stocks: FnoStock[], accessToken: stri
       pctMove,
     };
   });
+}
 
+/**
+ * Narrows the full F&O stock list down to the TOP_N most promising
+ * candidates for this reversal strategy, using only cheap batched /quote
+ * snapshots — NOT the per-symbol historical-candle endpoint that's actually
+ * responsible for the 60s budget problem this exists to solve. See
+ * rankAllCandidates for the scoring itself.
+ */
+export async function selectScanCandidates(stocks: FnoStock[], accessToken: string): Promise<FnoStock[]> {
+  if (stocks.length <= TOP_N) return stocks;
+
+  const inputs = await computeScanInputs(stocks, accessToken);
   const byName = new Map(stocks.map((s) => [s.name, s]));
   return rankScanCandidates(inputs, TOP_N).map((name) => byName.get(name) as FnoStock);
 }
