@@ -44,7 +44,16 @@ export type StrategySignal = {
  * crossover even though nothing about the setup had actually changed.)
  *
  * SHORT requires all of, evaluated on the crossover's own day:
- *  - Supertrend "up" (green)
+ *  - Supertrend "up" (green) on BOTH the crossover day and the day before —
+ *    excludes the exact day Supertrend itself flips trend, since its value
+ *    jumps to the opposite band on that day rather than moving gradually;
+ *    an SMA that happens to already be past the newly-repositioned line
+ *    isn't a real crossover, the line jumped past the SMA rather than the
+ *    SMA moving across the line (caught via a real case: Kaynes Technology,
+ *    where Supertrend's value dropped ~165 points in one bar exactly when
+ *    it flipped to an uptrend, and SMA20 — which had been climbing during
+ *    the prior rally — ended up numerically above the new, much lower line
+ *    without having visibly crossed anything on the chart)
  *  - the Heikin Ashi candle close still above the Supertrend line
  *  - the trigger SMA just crossed from at/below the line to above it
  *  - the target SMA (next rung out) is still below the line — i.e. only the
@@ -112,13 +121,25 @@ export function detectSignals(
 
       const haCloseK = heikinAshi[k].close;
 
+      // Excludes the exact day Supertrend itself flips trend: its value
+      // jumps to the opposite band on that day (a discontinuity, not a
+      // gradual move), so an SMA that happens to already sit on the far
+      // side of the newly-repositioned line isn't a real crossover — the
+      // line jumped past the SMA, the SMA didn't cross the line. Requiring
+      // the trend to already match on the PREVIOUS day too means the SMA
+      // actually had to move across an already-stable, already-established
+      // Supertrend line to count.
+      const noFlipOnThisBar = prevSt.trend === curSt.trend;
+
       const shortCross = prevVal <= prevSt.value && cur > curSt.value;
       const targetStillBelowLine = targetValue < curSt.value;
-      const isShort = shortCross && curSt.trend === "up" && haCloseK > curSt.value && targetStillBelowLine;
+      const isShort =
+        shortCross && curSt.trend === "up" && noFlipOnThisBar && haCloseK > curSt.value && targetStillBelowLine;
 
       const longCross = prevVal >= prevSt.value && cur < curSt.value;
       const targetStillAboveLine = targetValue > curSt.value;
-      const isLong = longCross && curSt.trend === "down" && haCloseK < curSt.value && targetStillAboveLine;
+      const isLong =
+        longCross && curSt.trend === "down" && noFlipOnThisBar && haCloseK < curSt.value && targetStillAboveLine;
 
       if (!isShort && !isLong) continue;
 

@@ -125,15 +125,31 @@ export function backtestSymbol(symbol: string, candles: Candle[], options: Backt
       const targetValue = targetSeries[i];
       if ([cur, prevVal, targetValue].some(Number.isNaN)) continue;
 
+      // Excludes the exact day Supertrend itself flips trend — its value
+      // jumps to the opposite band that day rather than moving gradually,
+      // so an SMA that happens to already sit past the newly-repositioned
+      // line isn't a real crossover (the line jumped past the SMA, not the
+      // other way around). See lib/strategy.ts's detectSignals for the full
+      // explanation — same fix, same underlying artifact, since this loop
+      // uses identical crossover logic and would otherwise generate the
+      // same spurious trades in backtest results.
+      const noFlipOnThisBar = prevSt.trend === curSt.trend;
+
       const shortCross = prevVal <= prevSt.value && cur > curSt.value;
       const targetStillBelowLine = targetValue < curSt.value;
       const longCross = prevVal >= prevSt.value && cur < curSt.value;
       const targetStillAboveLine = targetValue > curSt.value;
 
       let direction: "short" | "long" | null = null;
-      if (shortCross && curSt.trend === "up" && haClose > curSt.value && targetStillBelowLine) {
+      if (shortCross && curSt.trend === "up" && noFlipOnThisBar && haClose > curSt.value && targetStillBelowLine) {
         direction = "short";
-      } else if (longCross && curSt.trend === "down" && haClose < curSt.value && targetStillAboveLine) {
+      } else if (
+        longCross &&
+        curSt.trend === "down" &&
+        noFlipOnThisBar &&
+        haClose < curSt.value &&
+        targetStillAboveLine
+      ) {
         direction = "long";
       }
       if (!direction) continue;
