@@ -2,14 +2,21 @@ import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { isConnected } from "@/lib/session";
 import { requireAccessToken } from "@/lib/kite";
-import { buildTradePlan, computeCapitalRequired } from "@/lib/paperTrading";
+import { buildTradePlan, computeCapitalRequired, findOpenTrade } from "@/lib/paperTrading";
 import { getPaperTrades, savePaperTrades, type PaperTrade } from "@/lib/kv";
 
-// Opens a new paper trade. Re-resolves the trade plan fresh (same as
+// Opens a brand-new paper trade. Re-resolves the trade plan fresh (same as
 // /preview) rather than trusting anything the client sends beyond
 // symbol/direction/mode/lots, so the recorded entry premium is always a
 // just-fetched live price, not a stale one from whenever the user was
 // looking at the preview screen.
+//
+// Refuses to open a second position for a (symbol, mode) that already has
+// one open — /preview should have routed the client to /increase instead,
+// but this is the server-side backstop, since opening a second position at
+// a possibly-different strike (today's ATM/OTM can differ from the
+// existing position's) rather than adding to the existing one at its own
+// strike is exactly what was asked to be avoided.
 export async function POST(request: NextRequest) {
   if (!isConnected()) {
     return NextResponse.json({ error: "Not connected to Zerodha." }, { status: 401 });
@@ -28,6 +35,14 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    const trades = await getPaperTrades();
+    if (findOpenTrade(trades, symbol, mode)) {
+      return NextResponse.json(
+        { error: `Already have an open ${mode} position on ${symbol} — use the increase option on it instead of opening a new one.` },
+        { status: 409 }
+      );
+    }
+
     const plan = await buildTradePlan(symbol, direction, mode);
     const capitalRequired = await computeCapitalRequired(plan, lots, requireAccessToken());
     const now = new Date().toISOString();
@@ -49,14 +64,11 @@ export async function POST(request: NextRequest) {
       entryPremium: plan.entryPremium,
       capitalRequired,
       status: "open",
-      exitAt: null,
-      exitUnderlyingPrice: null,
-      exitPremium: null,
+      closedLots: [],
       lastMarkPremium: plan.entryPremium,
       lastMarkAt: now,
     };
 
-    const trades = await getPaperTrades();
     trades.push(trade);
     await savePaperTrades(trades);
 

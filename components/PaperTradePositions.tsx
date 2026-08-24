@@ -4,6 +4,15 @@ import { useCallback, useEffect, useState } from "react";
 
 type PaperTradeLeg = { tradingsymbol: string; strike: number; optionType: "CE" | "PE" };
 
+type ClosedLot = {
+  lots: number;
+  exitPremium: number;
+  exitUnderlyingPrice: number;
+  closedAt: string;
+  capitalReleased: number | null;
+  pnl: number;
+};
+
 type PaperTrade = {
   id: string;
   symbol: string;
@@ -20,9 +29,7 @@ type PaperTrade = {
   entryPremium: number;
   capitalRequired: number | null;
   status: "open" | "closed";
-  exitAt: string | null;
-  exitUnderlyingPrice: number | null;
-  exitPremium: number | null;
+  closedLots: ClosedLot[];
   lastMarkPremium: number | null;
   lastMarkAt: string | null;
 };
@@ -45,12 +52,21 @@ function legLabel(leg: PaperTradeLeg) {
   return `${leg.strike.toFixed(0)}${leg.optionType}`;
 }
 
+type Adjustment = {
+  tradeId: string;
+  action: "increase" | "decrease";
+  lotsText: string;
+  status: "idle" | "submitting";
+  error: string | null;
+};
+
 export default function PaperTradePositions() {
   const [trades, setTrades] = useState<PaperTrade[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<"idle" | "loading" | "refreshing">("loading");
   const [closingId, setClosingId] = useState<string | null>(null);
   const [refreshedAt, setRefreshedAt] = useState<string | null>(null);
+  const [adjustment, setAdjustment] = useState<Adjustment | null>(null);
 
   const load = useCallback(async () => {
     setStatus("loading");
@@ -91,17 +107,18 @@ export default function PaperTradePositions() {
     }
   }
 
-  async function closeTrade(id: string) {
+  async function closeTrade(id: string, lots?: number) {
     setClosingId(id);
     try {
       const res = await fetch("/api/papertrade/close", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id }),
+        body: JSON.stringify(lots ? { id, lots } : { id }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Failed to close the trade.");
       setTrades((prev) => prev.map((t) => (t.id === id ? data.trade : t)));
+      setAdjustment(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -109,8 +126,48 @@ export default function PaperTradePositions() {
     }
   }
 
-  const openTrades = trades.filter((t) => t.status === "open");
-  const closedTrades = trades.filter((t) => t.status === "closed");
+  async function submitAdjustment(trade: PaperTrade) {
+    if (!adjustment) return;
+    const lots = Number(adjustment.lotsText);
+    if (!Number.isInteger(lots) || lots <= 0) {
+      setAdjustment({ ...adjustment, error: "Lots must be a positive whole number." });
+      return;
+    }
+    if (adjustment.action === "decrease" && lots > trade.lots) {
+      setAdjustment({ ...adjustment, error: `Only ${trade.lots} lot${trade.lots === 1 ? "" : "s"} open.` });
+      return;
+    }
+    setAdjustment({ ...adjustment, status: "submitting" });
+    try {
+      if (adjustment.action === "increase") {
+        const res = await fetch("/api/papertrade/increase", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ symbol: trade.symbol, mode: trade.mode, lots }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error ?? "Failed to increase the position.");
+        setTrades((prev) => prev.map((t) => (t.id === trade.id ? data.trade : t)));
+      } else {
+        const res = await fetch("/api/papertrade/close", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: trade.id, lots }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error ?? "Failed to reduce the position.");
+        setTrades((prev) => prev.map((t) => (t.id === trade.id ? data.trade : t)));
+      }
+      setAdjustment(null);
+    } catch (err) {
+      setAdjustment({ ...adjustment, status: "idle", error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  const openTrades = trades.filter((t) => t.status === "open" && t.lots > 0);
+  const closedEvents = trades
+    .flatMap((t) => t.closedLots.map((lot) => ({ trade: t, lot })))
+    .sort((a, b) => b.lot.closedAt.localeCompare(a.lot.closedAt));
   // typeof check, not !== null: a trade opened before capitalRequired
   // existed has no such field in storage at all (undefined at runtime,
   // even though the type says it's always present) — treating that the
@@ -135,7 +192,7 @@ export default function PaperTradePositions() {
 
       <div className="mt-3 flex items-center justify-between gap-3">
         <p className="text-xs text-muted">
-          {status === "loading" ? "Loading…" : `${openTrades.length} open · ${closedTrades.length} closed`}
+          {status === "loading" ? "Loading…" : `${openTrades.length} open · ${closedEvents.length} closed`}
         </p>
         <button
           onClick={refreshLive}
@@ -163,6 +220,7 @@ export default function PaperTradePositions() {
           const currentPremium = t.lastMarkPremium ?? t.entryPremium;
           const perShare = pnlPerShare(t.mode, t.entryPremium, currentPremium);
           const total = perShare * t.lots * t.lotSize;
+          const isAdjustingThis = adjustment?.tradeId === t.id;
           return (
             <li key={t.id} className="bg-surface px-4 py-3">
               <div className="flex items-center justify-between">
@@ -182,42 +240,92 @@ export default function PaperTradePositions() {
               <div className="mt-0.5 text-[11px] text-muted">
                 Capital {typeof t.capitalRequired === "number" ? `₹${fmt(t.capitalRequired, 0)}` : "unknown (margin lookup failed)"}
               </div>
-              <button
-                onClick={() => closeTrade(t.id)}
-                disabled={closingId === t.id}
-                className="mt-2 w-full rounded-lg border border-danger/40 px-3 py-1.5 text-xs font-medium text-danger disabled:opacity-50"
-              >
-                {closingId === t.id ? "Closing…" : "Close"}
-              </button>
+
+              {isAdjustingThis && adjustment && (
+                <div className="mt-2 rounded-lg border border-accent/40 bg-accent/5 p-2.5">
+                  <p className="text-[11px] font-medium">
+                    {adjustment.action === "increase" ? "Add lots" : "Reduce lots"} — {t.symbol}
+                  </p>
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    min="1"
+                    step="1"
+                    max={adjustment.action === "decrease" ? t.lots : undefined}
+                    value={adjustment.lotsText}
+                    onChange={(e) => setAdjustment({ ...adjustment, lotsText: e.target.value, error: null })}
+                    className="mt-1.5 w-full rounded-lg border border-border bg-surface2 p-2 text-sm text-foreground"
+                  />
+                  {adjustment.error && <p className="mt-1 text-[10px] text-danger">{adjustment.error}</p>}
+                  <div className="mt-2 flex gap-2">
+                    <button
+                      onClick={() => submitAdjustment(t)}
+                      disabled={adjustment.status === "submitting"}
+                      className="flex-1 rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-black disabled:opacity-50"
+                    >
+                      {adjustment.status === "submitting" ? "Working…" : "Confirm"}
+                    </button>
+                    <button
+                      onClick={() => setAdjustment(null)}
+                      className="flex-1 rounded-lg border border-border px-3 py-1.5 text-xs font-medium"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {!isAdjustingThis && (
+                <div className="mt-2 flex gap-2">
+                  <button
+                    onClick={() => setAdjustment({ tradeId: t.id, action: "increase", lotsText: "1", status: "idle", error: null })}
+                    className="flex-1 rounded-lg border border-border bg-surface2 px-3 py-1.5 text-xs font-medium"
+                  >
+                    Add
+                  </button>
+                  <button
+                    onClick={() => setAdjustment({ tradeId: t.id, action: "decrease", lotsText: "1", status: "idle", error: null })}
+                    className="flex-1 rounded-lg border border-border bg-surface2 px-3 py-1.5 text-xs font-medium"
+                    disabled={t.lots <= 1}
+                    title={t.lots <= 1 ? "Only 1 lot open — use Close instead" : undefined}
+                  >
+                    Reduce
+                  </button>
+                  <button
+                    onClick={() => closeTrade(t.id)}
+                    disabled={closingId === t.id}
+                    className="flex-1 rounded-lg border border-danger/40 px-3 py-1.5 text-xs font-medium text-danger disabled:opacity-50"
+                  >
+                    {closingId === t.id ? "Closing…" : "Close"}
+                  </button>
+                </div>
+              )}
             </li>
           );
         })}
       </ul>
 
-      {closedTrades.length > 0 && (
+      {closedEvents.length > 0 && (
         <>
-          <h2 className="mt-5 text-xs font-semibold uppercase tracking-wide text-muted">Closed ({closedTrades.length})</h2>
+          <h2 className="mt-5 text-xs font-semibold uppercase tracking-wide text-muted">Closed ({closedEvents.length})</h2>
           <ul className="mt-2 divide-y divide-border overflow-hidden rounded-xl border border-border">
-            {closedTrades.map((t) => {
-              const perShare = pnlPerShare(t.mode, t.entryPremium, t.exitPremium ?? t.entryPremium);
-              const total = perShare * t.lots * t.lotSize;
-              return (
-                <li key={t.id} className="bg-surface px-4 py-3">
-                  <div className="flex items-center justify-between">
-                    <span className="font-medium">
-                      {t.symbol}{" "}
-                      <span className="text-[10px] font-normal text-muted">
-                        {t.mode === "buy" ? "Buy" : "Sell"} {legLabel(t.shortLeg)}
-                      </span>
+            {closedEvents.map(({ trade: t, lot }, i) => (
+              <li key={`${t.id}-${i}`} className="bg-surface px-4 py-3">
+                <div className="flex items-center justify-between">
+                  <span className="font-medium">
+                    {t.symbol}{" "}
+                    <span className="text-[10px] font-normal text-muted">
+                      {t.mode === "buy" ? "Buy" : "Sell"} {legLabel(t.shortLeg)}
                     </span>
-                    <span className={`text-sm font-semibold ${total >= 0 ? "text-accent" : "text-danger"}`}>{signedFmt(total, 0)}</span>
-                  </div>
-                  <div className="mt-1 text-[11px] text-muted">
-                    Entry {fmt(t.entryPremium)} → Exit {fmt(t.exitPremium ?? 0)} · {t.lots} lot{t.lots === 1 ? "" : "s"} × {t.lotSize}
-                  </div>
-                </li>
-              );
-            })}
+                  </span>
+                  <span className={`text-sm font-semibold ${lot.pnl >= 0 ? "text-accent" : "text-danger"}`}>{signedFmt(lot.pnl, 0)}</span>
+                </div>
+                <div className="mt-1 text-[11px] text-muted">
+                  Entry {fmt(t.entryPremium)} → Exit {fmt(lot.exitPremium)} · {lot.lots} lot{lot.lots === 1 ? "" : "s"} × {t.lotSize} ·{" "}
+                  {new Date(lot.closedAt).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short" })}
+                </div>
+              </li>
+            ))}
           </ul>
         </>
       )}

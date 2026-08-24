@@ -240,6 +240,16 @@ export async function buildTradePlan(
   };
 }
 
+/**
+ * The already-open position for a (symbol, mode), if any — so opening
+ * "another" trade on the same signal instead adds to the existing one at
+ * its own strike, rather than resolving a fresh (and possibly different,
+ * since ATM/OTM strikes move with the underlying) strike each time.
+ */
+export function findOpenTrade(trades: PaperTrade[], symbol: string, mode: "buy" | "sell"): PaperTrade | undefined {
+  return trades.find((t) => t.status === "open" && t.symbol === symbol && t.mode === mode);
+}
+
 /** Every Kite quote key needed to mark one open trade to market. */
 export function tradeQuoteKeys(trade: Pick<PaperTrade, "symbol" | "shortLeg" | "longLeg">): string[] {
   const keys = [`NFO:${trade.shortLeg.tradingsymbol}`, spotQuoteKey(trade.symbol)];
@@ -320,10 +330,60 @@ export async function computeCapitalRequired(plan: TradePlan, lots: number, acce
  */
 export async function backfillCapitalRequired(trade: PaperTrade, accessToken: string): Promise<number | null> {
   if (typeof trade.capitalRequired === "number") return trade.capitalRequired;
+  return computeMarginForQuantity(trade, trade.lots, accessToken);
+}
+
+/** Same margin computation as computeCapitalRequired/backfillCapitalRequired, but for an arbitrary quantity (in lots) rather than always the trade's own current lots — used when the lot count is about to change (adding to or trimming a position) and the capital figure needs to reflect the NEW size, not the old one. */
+export async function computeMarginForQuantity(
+  trade: Pick<PaperTrade, "mode" | "entryPremium" | "lotSize" | "shortLeg" | "longLeg">,
+  lots: number,
+  accessToken: string
+): Promise<number | null> {
   if (trade.mode === "buy") {
-    return trade.entryPremium * trade.lots * trade.lotSize;
+    return trade.entryPremium * lots * trade.lotSize;
   }
   if (!trade.longLeg) return null;
-  const orders = spreadMarginOrders(trade.shortLeg.tradingsymbol, trade.longLeg.tradingsymbol, trade.lots * trade.lotSize);
+  const orders = spreadMarginOrders(trade.shortLeg.tradingsymbol, trade.longLeg.tradingsymbol, lots * trade.lotSize);
   return getBasketMargin(orders, accessToken);
+}
+
+/** Lots-weighted average premium after adding `addLots` at `addPremium` to an existing `oldLots` at `oldPremium` — standard averaging-in, same as a real broker would blend a top-up into an existing position's average price. */
+export function weightedAveragePremium(oldPremium: number, oldLots: number, addPremium: number, addLots: number): number {
+  return (oldPremium * oldLots + addPremium * addLots) / (oldLots + addLots);
+}
+
+export type PartialCloseResult = {
+  closedLots: number;
+  remainingLots: number;
+  pnl: number; // realized ₹ for just the closed portion
+  capitalReleased: number | null; // this closed portion's share of the pre-close capitalRequired, scaled by lots
+  remainingCapitalRequired: number | null; // what's left open's share of the pre-close capitalRequired, scaled by lots — null once remainingLots is 0
+};
+
+/**
+ * Splits off `lotsToClose` (clamped to however many are actually open) at
+ * `exitPremium`, realizing P&L on just that portion. Capital is allocated
+ * between the closed and still-open portions by simple proportional
+ * scaling of the pre-close capitalRequired (capital is roughly linear per
+ * lot for the same contract, unlike comparing genuinely different
+ * contracts) — cheaper than a fresh margin call on every partial close, and
+ * accurate enough for the same strikes at a different quantity.
+ */
+export function computePartialClose(
+  trade: Pick<PaperTrade, "mode" | "entryPremium" | "lots" | "lotSize" | "capitalRequired">,
+  lotsToClose: number,
+  exitPremium: number
+): PartialCloseResult {
+  const closedLots = Math.min(Math.max(lotsToClose, 0), trade.lots);
+  const remainingLots = trade.lots - closedLots;
+  const pnl = computePnlPerShare(trade.mode, trade.entryPremium, exitPremium) * closedLots * trade.lotSize;
+  const capitalPerLot =
+    typeof trade.capitalRequired === "number" && trade.lots > 0 ? trade.capitalRequired / trade.lots : null;
+  return {
+    closedLots,
+    remainingLots,
+    pnl,
+    capitalReleased: capitalPerLot !== null ? capitalPerLot * closedLots : null,
+    remainingCapitalRequired: remainingLots > 0 && capitalPerLot !== null ? capitalPerLot * remainingLots : null,
+  };
 }

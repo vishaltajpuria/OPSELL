@@ -100,6 +100,23 @@ export async function getLatestSignals(): Promise<LatestSignals | null> {
 
 export type PaperTradeLeg = { tradingsymbol: string; strike: number; optionType: "CE" | "PE" };
 
+// One partial (or the final, fully-closing) realization event on a
+// position — a position can be trimmed more than once over its life, each
+// trim its own realized P&L, so this is an array on the trade rather than a
+// single exit.
+export type ClosedLot = {
+  lots: number;
+  exitPremium: number; // net premium at the time of this close, per share/unit
+  exitUnderlyingPrice: number;
+  closedAt: string; // ISO timestamp
+  // This event's share of the position's capitalRequired at the moment it
+  // was closed, scaled proportionally by lots (capital is treated as
+  // roughly linear per lot for the same contract, which margin genuinely
+  // is) — null if capital wasn't known at that point.
+  capitalReleased: number | null;
+  pnl: number; // realized ₹ for just this closed portion — precomputed and stored so Performance doesn't need to re-derive mode-based sign logic per event
+};
+
 export type PaperTrade = {
   id: string;
   symbol: string;
@@ -109,43 +126,97 @@ export type PaperTrade = {
   tradingSessionsUntilExpiryAtEntry: number;
   shortLeg: PaperTradeLeg; // the only leg in "buy" mode; the sold leg in "sell" mode
   longLeg: PaperTradeLeg | null; // protective leg, "sell" mode only
-  lots: number;
+  lots: number; // CURRENTLY open lots — 0 once fully closed, reduced by a partial close, increased by adding to the position
   lotSize: number;
-  entryAt: string; // ISO timestamp
-  entryUnderlyingPrice: number;
-  entryPremium: number; // per share/unit — net of both legs if a spread
-  // Capital tied up by this position, total ₹ (already scaled by lots *
-  // lotSize) — for "buy" this is just the premium paid, always known; for
-  // "sell" it's the real hedge-aware margin Kite's basket-margin endpoint
-  // would actually require, computed once at entry (not re-fetched by the
-  // Live button, so it stays a stable denominator for a return-on-capital
-  // calculation over the life of the trade). Null only if that margin
-  // lookup failed at entry time — the trade still opens, this position is
-  // just excluded from the capital-deployed total until you know it.
+  entryAt: string; // ISO timestamp of the ORIGINAL entry (unchanged by later top-ups)
+  entryUnderlyingPrice: number; // underlying price at the original entry (unchanged by later top-ups)
+  entryPremium: number; // per share/unit, net of both legs if a spread — weighted average across whatever's currently open, if the position was added to since first opened
+  // Capital tied up by the CURRENTLY OPEN lots, total ₹ (already scaled by
+  // lots * lotSize) — for "buy" this is just the premium paid, always
+  // known; for "sell" it's the real hedge-aware margin Kite's basket-margin
+  // endpoint would actually require. Recomputed fresh whenever lots changes
+  // (opened, added to, or partially closed), so it always reflects the
+  // CURRENT open size — not frozen at the original entry the way it was
+  // before partial closes/top-ups existed. Null only if that margin lookup
+  // failed — the position still opens/adjusts, it's just excluded from the
+  // capital-deployed total until known.
   capitalRequired: number | null;
-  status: "open" | "closed";
-  exitAt: string | null;
-  exitUnderlyingPrice: number | null;
-  exitPremium: number | null;
+  status: "open" | "closed"; // "closed" once lots reaches 0
+  closedLots: ClosedLot[]; // history of every partial/full close, oldest first — empty if never closed at all
   lastMarkPremium: number | null; // most recent Live-button mark-to-market, per share/unit
   lastMarkAt: string | null;
 };
 
 const PAPER_TRADES_KEY = "papertrades:all";
 
+// A trade record as it may actually be shaped in Redis right now — includes
+// fields from schema versions before closedLots existed, so getPaperTrades
+// can migrate them on read rather than the app crashing or silently
+// dropping history.
+type StoredPaperTradeShape = Omit<PaperTrade, "closedLots" | "capitalRequired"> & {
+  capitalRequired?: number | null;
+  closedLots?: ClosedLot[];
+  // Pre-partial-close schema: a single top-level exit instead of an array.
+  exitAt?: string | null;
+  exitUnderlyingPrice?: number | null;
+  exitPremium?: number | null;
+};
+
 // Stored as one JSON array under a single key — manual entry/exit only
 // (no automated writer), so volume stays low enough that this doesn't need
 // the per-batch key sharding the signals cache uses.
 export async function getPaperTrades(): Promise<PaperTrade[]> {
-  const trades = (await getRedis().get<PaperTrade[]>(PAPER_TRADES_KEY)) ?? [];
-  // Trades opened before capitalRequired existed have no such field in
-  // storage at all (undefined, not null) — normalize here so every caller
-  // downstream can rely on the field always being present, rather than
-  // each one separately having to treat "missing" and "known null" the
-  // same way (a bug that shipped once already: PaperTradePositions.tsx
-  // checked `!== null`, which is true for undefined too, and crashed
-  // trying to format it as a number).
-  return trades.map((t) => ({ ...t, capitalRequired: t.capitalRequired ?? null }));
+  const raw = (await getRedis().get<StoredPaperTradeShape[]>(PAPER_TRADES_KEY)) ?? [];
+  return raw.map((t): PaperTrade => {
+    const capitalRequired = t.capitalRequired ?? null;
+
+    if (Array.isArray(t.closedLots)) {
+      return { ...t, capitalRequired, closedLots: t.closedLots, lastMarkPremium: t.lastMarkPremium ?? null, lastMarkAt: t.lastMarkAt ?? null };
+    }
+
+    // Pre-partial-close record: migrate a legacy single top-level exit
+    // (if any) into a one-entry closedLots history. Old records never
+    // reduced `lots` on close, so a legacy-closed trade's `lots` here is
+    // still the full original size — the closed portion IS the whole
+    // position, and it now has zero lots open.
+    const hasLegacyExit = typeof t.exitAt === "string" && typeof t.exitPremium === "number";
+    const closedLots: ClosedLot[] = hasLegacyExit
+      ? [
+          {
+            lots: t.lots,
+            exitPremium: t.exitPremium as number,
+            exitUnderlyingPrice: t.exitUnderlyingPrice ?? t.entryUnderlyingPrice,
+            closedAt: t.exitAt as string,
+            capitalReleased: capitalRequired,
+            pnl:
+              (t.mode === "buy" ? (t.exitPremium as number) - t.entryPremium : t.entryPremium - (t.exitPremium as number)) *
+              t.lots *
+              t.lotSize,
+          },
+        ]
+      : [];
+
+    return {
+      id: t.id,
+      symbol: t.symbol,
+      direction: t.direction,
+      mode: t.mode,
+      expiry: t.expiry,
+      tradingSessionsUntilExpiryAtEntry: t.tradingSessionsUntilExpiryAtEntry,
+      shortLeg: t.shortLeg,
+      longLeg: t.longLeg,
+      lots: hasLegacyExit ? 0 : t.lots,
+      lotSize: t.lotSize,
+      entryAt: t.entryAt,
+      entryUnderlyingPrice: t.entryUnderlyingPrice,
+      entryPremium: t.entryPremium,
+      capitalRequired: hasLegacyExit ? null : capitalRequired,
+      status: t.status,
+      closedLots,
+      lastMarkPremium: t.lastMarkPremium ?? null,
+      lastMarkAt: t.lastMarkAt ?? null,
+    };
+  });
 }
 
 export async function savePaperTrades(trades: PaperTrade[]): Promise<void> {

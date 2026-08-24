@@ -13,9 +13,11 @@ type StoredSignal = {
   targetSma: { period: number; value: number };
 };
 
-type TradePlanLeg = { tradingsymbol: string; strike: number; optionType: "CE" | "PE"; premium: number; lotSize: number };
+type PaperTradeLeg = { tradingsymbol: string; strike: number; optionType: "CE" | "PE" };
+type TradePlanLeg = PaperTradeLeg & { premium: number; lotSize: number };
 
-type TradePlan = {
+type FreshPlan = {
+  isIncrease: false;
   symbol: string;
   direction: "short" | "long";
   mode: "buy" | "sell";
@@ -28,6 +30,23 @@ type TradePlan = {
   entryPremium: number;
 };
 
+type IncreasePlan = {
+  isIncrease: true;
+  symbol: string;
+  direction: "short" | "long";
+  mode: "buy" | "sell";
+  expiry: string;
+  existingLots: number;
+  existingEntryPremium: number;
+  underlyingPrice: number;
+  currentPremium: number;
+  shortLeg: PaperTradeLeg;
+  longLeg: PaperTradeLeg | null;
+  lotSize: number;
+};
+
+type PlanResponse = FreshPlan | IncreasePlan;
+
 function fmt(n: number, digits = 2) {
   return n.toLocaleString("en-IN", { maximumFractionDigits: digits, minimumFractionDigits: digits });
 }
@@ -38,7 +57,7 @@ function signalLabel(s: Pick<StoredSignal, "direction" | "triggerSma">): string 
   return isSuper ? `Super ${base}` : base;
 }
 
-function legLabel(leg: TradePlanLeg) {
+function legLabel(leg: PaperTradeLeg) {
   return `${leg.strike.toFixed(0)}${leg.optionType}`;
 }
 
@@ -55,7 +74,7 @@ type Preview = {
   direction: "short" | "long";
   mode: "buy" | "sell";
   status: "loading" | "ready" | "confirming" | "confirmed" | "error";
-  plan: TradePlan | null;
+  plan: PlanResponse | null;
   error: string | null;
   lotsText: string;
 };
@@ -103,13 +122,17 @@ export default function PaperTradeCandidates({
     }
     setPreview({ ...preview, status: "confirming" });
     try {
-      const res = await fetch("/api/papertrade/start", {
+      const endpoint = preview.plan.isIncrease ? "/api/papertrade/increase" : "/api/papertrade/start";
+      const body = preview.plan.isIncrease
+        ? { symbol: preview.symbol, mode: preview.mode, lots }
+        : { symbol: preview.symbol, direction: preview.direction, mode: preview.mode, lots };
+      const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ symbol: preview.symbol, direction: preview.direction, mode: preview.mode, lots }),
+        body: JSON.stringify(body),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Failed to start the trade.");
+      if (!res.ok) throw new Error(data.error ?? "Failed to submit the trade.");
       setPreview({ ...preview, status: "confirmed" });
     } catch (err) {
       setPreview({ ...preview, status: "error", error: err instanceof Error ? err.message : String(err) });
@@ -128,15 +151,36 @@ export default function PaperTradeCandidates({
         <div className="mt-3 rounded-xl border border-accent/50 bg-accent/5 p-3">
           <p className="text-sm font-semibold">
             {preview.symbol} · {preview.mode === "buy" ? "Buy" : "Sell"} · {preview.direction}
+            {preview.plan?.isIncrease && " · adding to existing position"}
           </p>
           {preview.status === "loading" && <p className="mt-2 text-xs text-muted">Fetching live option chain…</p>}
           {preview.status === "error" && <p className="mt-2 text-xs text-danger">{preview.error}</p>}
           {preview.status === "confirmed" && (
             <p className="mt-2 text-xs text-accent">
-              Trade opened — check the Positions tab.
+              {preview.plan?.isIncrease ? "Position increased" : "Trade opened"} — check the Positions tab.
             </p>
           )}
-          {preview.plan && preview.status !== "confirmed" && (
+          {preview.plan && preview.status !== "confirmed" && preview.plan.isIncrease && (
+            <div className="mt-2 text-xs text-muted">
+              <p>Already holding {preview.plan.existingLots} lot{preview.plan.existingLots === 1 ? "" : "s"} at {legLabel(preview.plan.shortLeg)}</p>
+              {preview.plan.longLeg && <p>Spread w/ {legLabel(preview.plan.longLeg)}</p>}
+              <p>Existing avg entry {fmt(preview.plan.existingEntryPremium)} → Current {fmt(preview.plan.currentPremium)}</p>
+              <p>Expiry {preview.plan.expiry} · underlying {fmt(preview.plan.underlyingPrice)} · lot size {preview.plan.lotSize}</p>
+              <label className="mt-2 block">
+                Lots to add
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min="1"
+                  step="1"
+                  value={preview.lotsText}
+                  onChange={(e) => setPreview(preview && { ...preview, lotsText: e.target.value })}
+                  className="mt-1 w-full rounded-lg border border-border bg-surface2 p-2 text-sm text-foreground"
+                />
+              </label>
+            </div>
+          )}
+          {preview.plan && preview.status !== "confirmed" && !preview.plan.isIncrease && (
             <div className="mt-2 text-xs text-muted">
               <p>
                 Expiry {preview.plan.expiry} ({preview.plan.tradingSessionsUntilExpiry} sessions left
@@ -178,7 +222,7 @@ export default function PaperTradeCandidates({
                 disabled={preview.status !== "ready" && preview.status !== "error"}
                 className="flex-1 rounded-lg bg-accent px-3 py-2 text-xs font-medium text-black disabled:opacity-50"
               >
-                {preview.status === "confirming" ? "Starting…" : "Confirm"}
+                {preview.status === "confirming" ? "Submitting…" : "Confirm"}
               </button>
             )}
             <button

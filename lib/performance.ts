@@ -1,19 +1,15 @@
-import type { PaperTrade } from "@/lib/kv";
+import type { PaperTrade, ClosedLot } from "@/lib/kv";
 import { computePnlPerShare } from "@/lib/paperTrading";
-
-function tradePnl(trade: PaperTrade, premium: number): number {
-  return computePnlPerShare(trade.mode, trade.entryPremium, premium) * trade.lots * trade.lotSize;
-}
 
 export type MonthlyPerformance = {
   month: string; // "YYYY-MM"
-  tradeCount: number;
+  tradeCount: number; // number of close EVENTS (a partial close counts on its own), not distinct positions
   wins: number;
   losses: number;
   totalPnl: number; // ₹, realized
-  totalCapital: number; // ₹, sum of capitalRequired across trades closed this month that have one
-  unknownCapitalCount: number; // trades closed this month with no capital figure — excluded from totalCapital/returnPercent
-  returnPercent: number | null; // totalPnl / totalCapital * 100 — null if no trade closed this month has a known capital figure
+  totalCapital: number; // ₹, sum of capitalReleased across events this month that have one
+  unknownCapitalCount: number; // events this month with no capital figure — excluded from totalCapital/returnPercent
+  returnPercent: number | null; // totalPnl / totalCapital * 100 — null if no event this month has a known capital figure
 };
 
 export type PerformanceSummary = {
@@ -28,60 +24,60 @@ export type PerformanceSummary = {
     unknownCapitalCount: number;
     returnPercent: number | null;
   };
-  // Current mark-to-market of still-open positions — shown separately, not
-  // folded into any month's return, since it isn't realized yet and can
-  // still move either way before the trade is actually closed.
+  // Current mark-to-market of still-open lots across all positions — shown
+  // separately, not folded into any month's return, since it isn't
+  // realized yet and can still move either way before actually closing.
   openPositionsUnrealizedPnl: number;
 };
 
 /**
  * Monthly and cumulative performance from the paper-trade ledger, computed
  * fresh from whatever's currently stored — no separate cache to keep in
- * sync, so it's always up to date the moment a trade is closed.
+ * sync, so it's always up to date the moment a trade is closed (fully or
+ * partially).
  *
- * A trade's return counts toward the month it was CLOSED in (exitAt), not
- * opened — this is realized P&L, matching how "return on capital deployed"
- * is normally reported: only trades that have actually resolved. A month's
- * return % is the sum of P&L from every trade closed that month divided by
- * the sum of capital those trades required — a capital-weighted blend, not
- * a simple average of each trade's own % return, since a bigger position
- * should count for more. There's no fixed portfolio size assumed anywhere
- * (paper trading here has no defined starting capital) — "capital
- * deployed" is just whatever capitalRequired the trades closed that month
- * actually needed, summed.
+ * Each entry in a trade's closedLots (see lib/kv.ts) is its own realized
+ * event — a position added to and trimmed several times over its life
+ * contributes one event per trim, not one event per position, each
+ * counting toward the month IT was closed in (closedAt), not when the
+ * position was originally opened. A month's return % is capital-weighted,
+ * not an average of each event's own % return: sum of that month's P&L
+ * divided by the sum of capitalReleased for the events that closed that
+ * month, so a bigger position counts for more. There's no fixed starting
+ * portfolio size assumed anywhere — "capital deployed" for a month is just
+ * whatever capital the events that closed that month actually released,
+ * summed.
  */
 export function computePerformance(trades: PaperTrade[]): PerformanceSummary {
-  const closed = trades.filter((t) => t.status === "closed" && t.exitAt !== null && t.exitPremium !== null);
-  const open = trades.filter((t) => t.status === "open");
+  const events: ClosedLot[] = trades.flatMap((t) => t.closedLots);
 
-  const byMonth = new Map<string, PaperTrade[]>();
-  for (const t of closed) {
-    const month = (t.exitAt as string).slice(0, 7);
+  const byMonth = new Map<string, ClosedLot[]>();
+  for (const e of events) {
+    const month = e.closedAt.slice(0, 7);
     const arr = byMonth.get(month) ?? [];
-    arr.push(t);
+    arr.push(e);
     byMonth.set(month, arr);
   }
 
   const monthly: MonthlyPerformance[] = Array.from(byMonth.keys())
     .sort()
     .map((month) => {
-      const ts = byMonth.get(month)!;
+      const es = byMonth.get(month)!;
       let totalPnl = 0;
       let totalCapital = 0;
       let unknownCapitalCount = 0;
       let wins = 0;
-      for (const t of ts) {
-        const pnl = tradePnl(t, t.exitPremium as number);
-        totalPnl += pnl;
-        if (pnl > 0) wins++;
-        if (typeof t.capitalRequired === "number") totalCapital += t.capitalRequired;
+      for (const e of es) {
+        totalPnl += e.pnl;
+        if (e.pnl > 0) wins++;
+        if (typeof e.capitalReleased === "number") totalCapital += e.capitalReleased;
         else unknownCapitalCount++;
       }
       return {
         month,
-        tradeCount: ts.length,
+        tradeCount: es.length,
         wins,
-        losses: ts.length - wins,
+        losses: es.length - wins,
         totalPnl,
         totalCapital,
         unknownCapitalCount,
@@ -107,7 +103,12 @@ export function computePerformance(trades: PaperTrade[]): PerformanceSummary {
     { tradeCount: 0, wins: 0, losses: 0, totalPnl: 0, totalCapital: 0, unknownCapitalCount: 0 }
   );
 
-  const openPositionsUnrealizedPnl = open.reduce((sum, t) => sum + tradePnl(t, t.lastMarkPremium ?? t.entryPremium), 0);
+  const openPositionsUnrealizedPnl = trades
+    .filter((t) => t.status === "open" && t.lots > 0)
+    .reduce((sum, t) => {
+      const premium = t.lastMarkPremium ?? t.entryPremium;
+      return sum + computePnlPerShare(t.mode, t.entryPremium, premium) * t.lots * t.lotSize;
+    }, 0);
 
   return {
     monthly,
