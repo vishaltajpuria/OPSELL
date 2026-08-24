@@ -111,27 +111,6 @@ export type Candle = {
   volume: number;
 };
 
-export type Position = {
-  tradingsymbol: string;
-  exchange: string;
-  instrument_token: number;
-  product: string;
-  quantity: number;
-  average_price: number;
-  last_price: number;
-  close_price: number;
-  pnl: number;
-  m2m: number;
-};
-
-export type Positions = { net: Position[]; day: Position[] };
-
-export async function getPositions(accessToken: string): Promise<Positions> {
-  const res = await kiteGet(`/portfolio/positions`, accessToken);
-  const json = await res.json();
-  return json.data;
-}
-
 export async function getHistoricalCandles(
   instrumentToken: number,
   interval: string,

@@ -97,3 +97,40 @@ export async function saveSignalBatch(
 export async function getLatestSignals(): Promise<LatestSignals | null> {
   return (await getRedis().get<LatestSignals>("signals:latest")) ?? null;
 }
+
+export type PaperTradeLeg = { tradingsymbol: string; strike: number; optionType: "CE" | "PE" };
+
+export type PaperTrade = {
+  id: string;
+  symbol: string;
+  direction: "short" | "long"; // from the underlying Strategy-tab signal
+  mode: "buy" | "sell"; // naked ATM buying, or an OTM credit spread
+  expiry: string;
+  tradingSessionsUntilExpiryAtEntry: number;
+  shortLeg: PaperTradeLeg; // the only leg in "buy" mode; the sold leg in "sell" mode
+  longLeg: PaperTradeLeg | null; // protective leg, "sell" mode only
+  lots: number;
+  lotSize: number;
+  entryAt: string; // ISO timestamp
+  entryUnderlyingPrice: number;
+  entryPremium: number; // per share/unit — net of both legs if a spread
+  status: "open" | "closed";
+  exitAt: string | null;
+  exitUnderlyingPrice: number | null;
+  exitPremium: number | null;
+  lastMarkPremium: number | null; // most recent Live-button mark-to-market, per share/unit
+  lastMarkAt: string | null;
+};
+
+const PAPER_TRADES_KEY = "papertrades:all";
+
+// Stored as one JSON array under a single key — manual entry/exit only
+// (no automated writer), so volume stays low enough that this doesn't need
+// the per-batch key sharding the signals cache uses.
+export async function getPaperTrades(): Promise<PaperTrade[]> {
+  return (await getRedis().get<PaperTrade[]>(PAPER_TRADES_KEY)) ?? [];
+}
+
+export async function savePaperTrades(trades: PaperTrade[]): Promise<void> {
+  await getRedis().set(PAPER_TRADES_KEY, trades);
+}

@@ -23,6 +23,7 @@ export type OptionInstrument = {
   strike: number;
   optionType: "CE" | "PE";
   expiry: string;
+  lotSize: number;
 };
 
 type KiteInstrument = {
@@ -138,5 +139,30 @@ export async function getOptionChainInstruments(
       strike: inst.strike,
       optionType: inst.instrument_type as "CE" | "PE",
       expiry: toIsoDate(inst.expiry),
+      lotSize: inst.lot_size,
     }));
+}
+
+/**
+ * Every distinct options expiry date available for a symbol (ascending) —
+ * works for an F&O stock name or an index's F&O underlying name (e.g.
+ * "NIFTY", "BANKNIFTY") alike, since both live in the same NFO-OPT segment
+ * of the instrument dump, just filtered by `name`. Includes weekly expiries
+ * where they exist (indices) — callers that want monthly-only should group
+ * by month and take the latest date in each (see pickMonthlyExpiry in
+ * lib/paperTrading.ts) rather than assume a naive last-Thursday-of-month
+ * calendar formula, since NSE shifts an expiry landing on a holiday.
+ */
+export async function getOptionExpiries(
+  symbol: string,
+  accessToken: string = requireAccessToken()
+): Promise<string[]> {
+  const instruments = await getRawInstruments(accessToken);
+  const expiries = new Set<string>();
+  for (const inst of instruments) {
+    if (inst.segment === "NFO-OPT" && inst.name === symbol) {
+      expiries.add(toIsoDate(inst.expiry));
+    }
+  }
+  return Array.from(expiries).sort();
 }
