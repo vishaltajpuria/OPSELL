@@ -1,10 +1,19 @@
-import { getQuote, requireAccessToken } from "@/lib/kite";
+import { getQuote, requireAccessToken, quoteBidAsk, quoteMidPrice } from "@/lib/kite";
 import { getOptionChainInstruments } from "@/lib/instruments";
 import { INDEX_DEFS } from "@/lib/indices";
 
 const INDEX_BY_KEY = new Map(INDEX_DEFS.map((d) => [d.key, d]));
 
-export type ChainLeg = { tradingsymbol: string; ltp: number; oi: number; volume: number; lotSize: number };
+export type ChainLeg = {
+  tradingsymbol: string;
+  ltp: number; // last traded price — kept for reference/display, not used for pricing decisions
+  bid: number | null;
+  ask: number | null;
+  mid: number; // (bid+ask)/2 when both quoted, else falls back to ltp — see quoteMidPrice in lib/kite.ts
+  oi: number;
+  volume: number;
+  lotSize: number;
+};
 
 export type ChainRow = {
   strike: number;
@@ -47,7 +56,15 @@ export async function getOptionChain(symbol: string, expiry: string): Promise<Op
     const q = quotes[`NFO:${inst.tradingsymbol}`];
     const row = byStrike.get(inst.strike) ?? { strike: inst.strike, call: null, put: null };
     const leg: ChainLeg | null = q
-      ? { tradingsymbol: inst.tradingsymbol, ltp: q.last_price, oi: q.oi, volume: q.volume, lotSize: inst.lotSize }
+      ? {
+          tradingsymbol: inst.tradingsymbol,
+          ltp: q.last_price,
+          ...quoteBidAsk(q),
+          mid: quoteMidPrice(q),
+          oi: q.oi,
+          volume: q.volume,
+          lotSize: inst.lotSize,
+        }
       : null;
     if (inst.optionType === "CE") row.call = leg;
     else row.put = leg;

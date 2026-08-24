@@ -76,9 +76,9 @@ export default function OptionChainView({
       <div className="mt-3 overflow-hidden rounded-xl border border-border">
         <div className="grid grid-cols-7 bg-surface2 px-2 py-2 text-[11px] font-medium text-muted">
           <span className="col-span-2 text-right">Call OI</span>
-          <span className="text-right">Call LTP</span>
+          <span className="text-right">Call Mid</span>
           <span className="text-center">Strike</span>
-          <span className="text-left">Put LTP</span>
+          <span className="text-left">Put Mid</span>
           <span className="col-span-2 text-left">Put OI</span>
         </div>
         <div className={loading ? "opacity-50" : ""}>
@@ -90,9 +90,19 @@ export default function OptionChainView({
               }`}
             >
               <span className="col-span-2 text-right text-muted">{fmt(row.call?.oi)}</span>
-              <span className="text-right font-medium">{fmt(row.call?.ltp)}</span>
+              <span className="text-right">
+                <span className="font-medium">{fmt(row.call?.mid)}</span>
+                {row.call && row.call.ltp !== row.call.mid && (
+                  <span className="block text-[10px] text-muted">LTP {fmt(row.call.ltp)}</span>
+                )}
+              </span>
               <span className="text-center font-semibold">{row.strike}</span>
-              <span className="text-left font-medium">{fmt(row.put?.ltp)}</span>
+              <span className="text-left">
+                <span className="font-medium">{fmt(row.put?.mid)}</span>
+                {row.put && row.put.ltp !== row.put.mid && (
+                  <span className="block text-[10px] text-muted">LTP {fmt(row.put.ltp)}</span>
+                )}
+              </span>
               <span className="col-span-2 text-left text-muted">{fmt(row.put?.oi)}</span>
             </div>
           ))}

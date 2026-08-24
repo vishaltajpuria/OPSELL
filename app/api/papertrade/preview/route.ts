@@ -27,6 +27,14 @@ export async function POST(request: NextRequest) {
   if (!symbol || !direction || !mode) {
     return NextResponse.json({ error: "symbol, direction ('short'|'long'), and mode ('buy'|'sell') are required." }, { status: 400 });
   }
+  // Optional: price a specific pair of strikes instead of the auto-picked
+  // ones (the "choose my strikes" flow) — ignored for an existing position
+  // (isIncrease branch below always reuses whatever strikes it already
+  // holds) and for "buy" mode (single ATM leg, not overridable here).
+  const manualStrikes =
+    typeof body?.shortStrike === "number" && typeof body?.longStrike === "number"
+      ? { short: body.shortStrike, long: body.longStrike }
+      : undefined;
 
   try {
     const trades = await getPaperTrades();
@@ -58,7 +66,7 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    const plan = await buildTradePlan(symbol, direction, mode);
+    const plan = await buildTradePlan(symbol, direction, mode, manualStrikes);
     return NextResponse.json({ isIncrease: false, ...plan });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to build a trade plan.";

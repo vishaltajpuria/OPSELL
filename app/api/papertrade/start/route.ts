@@ -33,6 +33,14 @@ export async function POST(request: NextRequest) {
       { status: 400 }
     );
   }
+  // Same optional manual-strikes override as /preview — passed through here
+  // too so the strikes that actually get confirmed match whatever the user
+  // reviewed on the preview screen, rather than re-picking automatically at
+  // confirm time (spot can move between preview and confirm).
+  const manualStrikes =
+    typeof body?.shortStrike === "number" && typeof body?.longStrike === "number"
+      ? { short: body.shortStrike, long: body.longStrike }
+      : undefined;
 
   try {
     const trades = await getPaperTrades();
@@ -43,7 +51,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const plan = await buildTradePlan(symbol, direction, mode);
+    const plan = await buildTradePlan(symbol, direction, mode, manualStrikes);
     const capitalRequired = await computeCapitalRequired(plan, lots, requireAccessToken());
     const now = new Date().toISOString();
     const trade: PaperTrade = {

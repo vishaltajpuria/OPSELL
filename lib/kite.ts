@@ -83,12 +83,18 @@ export async function getInstrumentsCsv(segment: string, accessToken: string): P
   return res.text();
 }
 
+export type QuoteDepthLevel = { price: number; quantity: number; orders: number };
+
 export type Quote = {
   last_price: number;
   net_change: number;
   oi: number;
   volume: number;
   ohlc: { open: number; high: number; low: number; close: number };
+  // Top-of-book order levels — present on the full /quote endpoint (this
+  // file only ever calls that, never /quote/ltp), absent or empty for a
+  // strike with no resting orders at all.
+  depth?: { buy: QuoteDepthLevel[]; sell: QuoteDepthLevel[] };
 };
 
 export async function getQuote(
@@ -100,6 +106,29 @@ export async function getQuote(
   const res = await kiteGet(`/quote`, accessToken, params);
   const json = await res.json();
   return json.data;
+}
+
+/** Best resting bid/ask for an instrument, or null on either side if the order book has nothing there. Kite returns depth levels best-first (buy[0] = highest bid, sell[0] = lowest ask); a level can still be a zero-price placeholder when fewer than 5 real levels exist, hence the price>0 filter. */
+export function quoteBidAsk(q: Quote): { bid: number | null; ask: number | null } {
+  const bid = q.depth?.buy?.find((l) => l.price > 0)?.price ?? null;
+  const ask = q.depth?.sell?.find((l) => l.price > 0)?.price ?? null;
+  return { bid, ask };
+}
+
+/**
+ * Best available price for an option: the mid of the live best bid/ask
+ * when the order book actually has both sides quoted, falling back to
+ * last_price only when depth is missing on either side. The LAST TRADED
+ * price can be badly stale for an illiquid or far-OTM strike — a single
+ * trade from hours ago at a very different underlying level — which is
+ * exactly what produces "impossible" readings like a further-OTM call
+ * showing a higher premium than a closer one. Mid-of-book reflects what's
+ * quoted right now instead.
+ */
+export function quoteMidPrice(q: Quote): number {
+  const { bid, ask } = quoteBidAsk(q);
+  if (bid !== null && ask !== null) return (bid + ask) / 2;
+  return q.last_price;
 }
 
 async function kitePostJson(path: string, accessToken: string, body: unknown) {

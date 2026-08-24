@@ -47,6 +47,9 @@ type IncreasePlan = {
 
 type PlanResponse = FreshPlan | IncreasePlan;
 
+type ChainLegQuote = { mid: number; bid: number | null; ask: number | null };
+type ChainPickerRow = { strike: number; call: ChainLegQuote | null; put: ChainLegQuote | null };
+
 function fmt(n: number, digits = 2) {
   return n.toLocaleString("en-IN", { maximumFractionDigits: digits, minimumFractionDigits: digits });
 }
@@ -77,7 +80,88 @@ type Preview = {
   plan: PlanResponse | null;
   error: string | null;
   lotsText: string;
+  // Manual strike picker (sell/fresh-plan only) — lets the user override
+  // the auto-picked short/long legs off the live chain, since a wide
+  // bid/ask spread can make the auto pick look "off" versus what's
+  // actually tradable right now.
+  showPicker: boolean;
+  chainRows: ChainPickerRow[] | null;
+  chainStatus: "idle" | "loading" | "error";
+  chainError: string | null;
 };
+
+// A strike's live spread as a % of its mid — flagged in the picker so a
+// wide, illiquid quote is visible before you trade it rather than only
+// showing a single (possibly stale) premium number.
+function spreadPercent(leg: ChainLegQuote): number | null {
+  if (leg.bid === null || leg.ask === null || leg.mid === 0) return null;
+  return ((leg.ask - leg.bid) / leg.mid) * 100;
+}
+
+function strikeOptionLabel(strike: number, leg: ChainLegQuote | null): string {
+  if (!leg) return `${strike} — no quote`;
+  const pct = spreadPercent(leg);
+  const spreadNote = pct === null ? " · no live bid/ask" : pct > 8 ? ` · ${pct.toFixed(0)}% spread` : "";
+  return `${strike} @ ${fmt(leg.mid)}${spreadNote}`;
+}
+
+function StrikePicker({
+  optionType,
+  chainRows,
+  chainStatus,
+  chainError,
+  shortStrike,
+  longStrike,
+  onPick,
+}: {
+  optionType: "CE" | "PE";
+  chainRows: ChainPickerRow[] | null;
+  chainStatus: "idle" | "loading" | "error";
+  chainError: string | null;
+  shortStrike: number;
+  longStrike: number;
+  onPick: (shortStrike: number, longStrike: number) => void;
+}) {
+  if (chainStatus === "loading") return <p className="mt-2 text-[11px] text-muted">Loading option chain…</p>;
+  if (chainStatus === "error") return <p className="mt-2 text-[11px] text-danger">{chainError}</p>;
+  if (!chainRows) return null;
+
+  const side = optionType === "CE" ? "call" : "put";
+  const rows = chainRows.filter((r) => r[side] !== null).sort((a, b) => a.strike - b.strike);
+
+  return (
+    <div className="mt-2 rounded-lg border border-border bg-surface2 p-2.5">
+      <label className="block text-[11px]">
+        Short leg (sell)
+        <select
+          value={shortStrike}
+          onChange={(e) => onPick(Number(e.target.value), longStrike)}
+          className="mt-1 w-full rounded-lg border border-border bg-surface p-1.5 text-xs text-foreground"
+        >
+          {rows.map((r) => (
+            <option key={r.strike} value={r.strike}>
+              {strikeOptionLabel(r.strike, r[side])}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="mt-2 block text-[11px]">
+        Long leg (buy, protective)
+        <select
+          value={longStrike}
+          onChange={(e) => onPick(shortStrike, Number(e.target.value))}
+          className="mt-1 w-full rounded-lg border border-border bg-surface p-1.5 text-xs text-foreground"
+        >
+          {rows.map((r) => (
+            <option key={r.strike} value={r.strike}>
+              {strikeOptionLabel(r.strike, r[side])}
+            </option>
+          ))}
+        </select>
+      </label>
+    </div>
+  );
+}
 
 export default function PaperTradeCandidates({
   candidates,
@@ -90,7 +174,8 @@ export default function PaperTradeCandidates({
   const sorted = [...candidates].sort((a, b) => targetGapPercent(b) - targetGapPercent(a));
 
   async function openPreview(symbol: string, direction: "short" | "long", mode: "buy" | "sell") {
-    setPreview({ symbol, direction, mode, status: "loading", plan: null, error: null, lotsText: "1" });
+    const base = { symbol, direction, mode, lotsText: "1", showPicker: false, chainRows: null, chainStatus: "idle" as const, chainError: null };
+    setPreview({ ...base, status: "loading", plan: null, error: null });
     try {
       const res = await fetch("/api/papertrade/preview", {
         method: "POST",
@@ -99,17 +184,46 @@ export default function PaperTradeCandidates({
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Failed to build a trade plan.");
-      setPreview({ symbol, direction, mode, status: "ready", plan: data, error: null, lotsText: "1" });
+      setPreview({ ...base, status: "ready", plan: data, error: null });
     } catch (err) {
-      setPreview({
-        symbol,
-        direction,
-        mode,
-        status: "error",
-        plan: null,
-        error: err instanceof Error ? err.message : String(err),
-        lotsText: "1",
+      setPreview({ ...base, status: "error", plan: null, error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  // Loads the live option chain for the plan's expiry so the strike picker
+  // can offer alternatives to the auto-picked legs — a strike's mid/bid/ask
+  // makes an illiquid, wide-spread strike visible before you trade it,
+  // rather than only the (possibly stale) auto-picked premium.
+  async function openStrikePicker() {
+    if (!preview || !preview.plan || preview.plan.isIncrease) return;
+    setPreview({ ...preview, showPicker: true, chainStatus: "loading", chainError: null });
+    try {
+      const res = await fetch(`/api/quote?symbol=${encodeURIComponent(preview.symbol)}&expiry=${preview.plan.expiry}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to load the option chain.");
+      setPreview((p) => (p ? { ...p, chainRows: data.rows, chainStatus: "idle", chainError: null } : p));
+    } catch (err) {
+      setPreview((p) => (p ? { ...p, chainStatus: "error", chainError: err instanceof Error ? err.message : String(err) } : p));
+    }
+  }
+
+  // Re-prices the plan for a specific pair of strikes the user picked —
+  // still a live server-side quote, same as the initial preview, just
+  // pinned to the chosen legs instead of the auto-picked ones.
+  async function repriceWithStrikes(shortStrike: number, longStrike: number) {
+    if (!preview) return;
+    setPreview({ ...preview, status: "loading" });
+    try {
+      const res = await fetch("/api/papertrade/preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ symbol: preview.symbol, direction: preview.direction, mode: preview.mode, shortStrike, longStrike }),
       });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to price those strikes.");
+      setPreview((p) => (p ? { ...p, status: "ready", plan: data, error: null } : p));
+    } catch (err) {
+      setPreview((p) => (p ? { ...p, status: "error", error: err instanceof Error ? err.message : String(err) } : p));
     }
   }
 
@@ -125,7 +239,18 @@ export default function PaperTradeCandidates({
       const endpoint = preview.plan.isIncrease ? "/api/papertrade/increase" : "/api/papertrade/start";
       const body = preview.plan.isIncrease
         ? { symbol: preview.symbol, mode: preview.mode, lots }
-        : { symbol: preview.symbol, direction: preview.direction, mode: preview.mode, lots };
+        : {
+            symbol: preview.symbol,
+            direction: preview.direction,
+            mode: preview.mode,
+            lots,
+            // Lock in exactly the strikes just previewed (auto-picked or
+            // manually chosen) rather than letting /start re-pick fresh
+            // ones — spot can move between preview and confirm, and the
+            // whole point of choosing strikes yourself is that what you
+            // confirm should be what you saw.
+            ...(preview.mode === "sell" ? { shortStrike: preview.plan.shortLeg.strike, longStrike: preview.plan.longLeg?.strike } : {}),
+          };
       const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -194,11 +319,32 @@ export default function PaperTradeCandidates({
                 </p>
               ) : (
                 preview.plan.longLeg && (
-                  <p>
-                    Sell {legLabel(preview.plan.shortLeg)} @ {fmt(preview.plan.shortLeg.premium)} / Buy{" "}
-                    {legLabel(preview.plan.longLeg)} @ {fmt(preview.plan.longLeg.premium)} · net credit{" "}
-                    {fmt(preview.plan.entryPremium)} · lot size {preview.plan.shortLeg.lotSize}
-                  </p>
+                  <>
+                    <p>
+                      Sell {legLabel(preview.plan.shortLeg)} @ {fmt(preview.plan.shortLeg.premium)} / Buy{" "}
+                      {legLabel(preview.plan.longLeg)} @ {fmt(preview.plan.longLeg.premium)} · net credit{" "}
+                      {fmt(preview.plan.entryPremium)} · lot size {preview.plan.shortLeg.lotSize}
+                    </p>
+                    {!preview.showPicker && (
+                      <button
+                        onClick={openStrikePicker}
+                        className="mt-1 text-[11px] text-accent underline decoration-dotted"
+                      >
+                        Choose strikes myself
+                      </button>
+                    )}
+                    {preview.showPicker && preview.plan.longLeg && (
+                      <StrikePicker
+                        optionType={preview.plan.shortLeg.optionType}
+                        chainRows={preview.chainRows}
+                        chainStatus={preview.chainStatus}
+                        chainError={preview.chainError}
+                        shortStrike={preview.plan.shortLeg.strike}
+                        longStrike={preview.plan.longLeg.strike}
+                        onPick={repriceWithStrikes}
+                      />
+                    )}
+                  </>
                 )
               )}
               <label className="mt-2 block">

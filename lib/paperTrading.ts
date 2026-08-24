@@ -1,6 +1,6 @@
 import { getOptionChain, spotQuoteKey, type ChainRow } from "@/lib/optionChain";
 import { getOptionExpiries } from "@/lib/instruments";
-import { getBasketMargin, type Quote, type MarginOrder } from "@/lib/kite";
+import { getBasketMargin, quoteMidPrice, type Quote, type MarginOrder } from "@/lib/kite";
 import type { PaperTrade } from "@/lib/kv";
 
 // "Buy ATM option of current month expiry (if more than 12 trading sessions
@@ -157,12 +157,23 @@ export type TradePlan = {
  *
  * "sell" builds a credit spread: the short leg ~1% OTM, a protective long
  * leg at least 4% OTM (naturally landing near 4-5% given typical NSE strike
- * spacing — see pickOtmAtLeast).
+ * spacing — see pickOtmAtLeast) — or, if manualStrikes is given, exactly
+ * the strikes the user chose instead of the auto-picked ones (see the
+ * option chain's bid/ask/mid in ChainLeg — a wide-spread strike's last
+ * traded price can be badly stale, which is exactly why picking strikes
+ * yourself off the live chain is offered as an alternative to the
+ * automatic picker).
+ *
+ * Premiums throughout use quoteMidPrice (bid/ask mid), not last_price —
+ * the last trade on an illiquid or far-OTM strike can be hours old at a
+ * very different underlying level, which is what produces "impossible"
+ * readings like a further-OTM option pricing higher than a closer one.
  */
 export async function buildTradePlan(
   symbol: string,
   direction: "short" | "long",
-  mode: "buy" | "sell"
+  mode: "buy" | "sell",
+  manualStrikes?: { short: number; long: number }
 ): Promise<TradePlan> {
   const expiries = await getOptionExpiries(symbol);
   const expiryChoice = pickMonthlyExpiry(expiries, new Date());
@@ -192,22 +203,31 @@ export async function buildTradePlan(
       tradingSessionsUntilExpiry: expiryChoice.tradingSessionsUntil,
       usedNextMonth: expiryChoice.usedNextMonth,
       underlyingPrice: spot,
-      shortLeg: { tradingsymbol: leg.tradingsymbol, strike: atmRow.strike, optionType, premium: leg.ltp, lotSize: leg.lotSize },
+      shortLeg: { tradingsymbol: leg.tradingsymbol, strike: atmRow.strike, optionType, premium: leg.mid, lotSize: leg.lotSize },
       longLeg: null,
-      entryPremium: leg.ltp,
+      entryPremium: leg.mid,
     };
   }
 
   const optionType: "CE" | "PE" = direction === "long" ? "PE" : "CE";
   const side = optionType === "CE" ? "call" : "put";
-  const shortTarget = side === "call" ? spot * (1 + SHORT_LEG_OTM_PERCENT / 100) : spot * (1 - SHORT_LEG_OTM_PERCENT / 100);
-  const shortRow = pickClosestStrike(chain.rows, shortTarget, side);
-  const longRow = pickOtmAtLeast(chain.rows, spot, LONG_LEG_MIN_OTM_PERCENT, side);
+  let shortRow: ChainRow | null;
+  let longRow: ChainRow | null;
+  if (manualStrikes) {
+    shortRow = chain.rows.find((r) => r.strike === manualStrikes.short) ?? null;
+    longRow = chain.rows.find((r) => r.strike === manualStrikes.long) ?? null;
+  } else {
+    const shortTarget = side === "call" ? spot * (1 + SHORT_LEG_OTM_PERCENT / 100) : spot * (1 - SHORT_LEG_OTM_PERCENT / 100);
+    shortRow = pickClosestStrike(chain.rows, shortTarget, side);
+    longRow = pickOtmAtLeast(chain.rows, spot, LONG_LEG_MIN_OTM_PERCENT, side);
+  }
   const shortLegQuote = shortRow ? legOf(shortRow, side) : null;
   const longLegQuote = longRow ? legOf(longRow, side) : null;
   if (!shortRow || !longRow || !shortLegQuote || !longLegQuote) {
     throw new Error(
-      `Couldn't find both spread legs for ${symbol} (short ~${SHORT_LEG_OTM_PERCENT}% OTM, long ≥${LONG_LEG_MIN_OTM_PERCENT}% OTM) — the option chain may not have enough strikes.`
+      manualStrikes
+        ? `Couldn't find both chosen strikes (${manualStrikes.short}, ${manualStrikes.long}) as ${side}s for ${symbol}.`
+        : `Couldn't find both spread legs for ${symbol} (short ~${SHORT_LEG_OTM_PERCENT}% OTM, long ≥${LONG_LEG_MIN_OTM_PERCENT}% OTM) — the option chain may not have enough strikes.`
     );
   }
   if (longRow.strike === shortRow.strike) {
@@ -226,17 +246,17 @@ export async function buildTradePlan(
       tradingsymbol: shortLegQuote.tradingsymbol,
       strike: shortRow.strike,
       optionType,
-      premium: shortLegQuote.ltp,
+      premium: shortLegQuote.mid,
       lotSize: shortLegQuote.lotSize,
     },
     longLeg: {
       tradingsymbol: longLegQuote.tradingsymbol,
       strike: longRow.strike,
       optionType,
-      premium: longLegQuote.ltp,
+      premium: longLegQuote.mid,
       lotSize: longLegQuote.lotSize,
     },
-    entryPremium: shortLegQuote.ltp - longLegQuote.ltp,
+    entryPremium: shortLegQuote.mid - longLegQuote.mid,
   };
 }
 
@@ -271,11 +291,11 @@ export function markToMarket(
   const spotQ = quotes[spotQuoteKey(trade.symbol)];
   if (!shortQ || !spotQ) return null;
 
-  let premium = shortQ.last_price;
+  let premium = quoteMidPrice(shortQ);
   if (trade.longLeg) {
     const longQ = quotes[`NFO:${trade.longLeg.tradingsymbol}`];
     if (!longQ) return null;
-    premium = shortQ.last_price - longQ.last_price;
+    premium = quoteMidPrice(shortQ) - quoteMidPrice(longQ);
   }
   return { premium, underlyingPrice: spotQ.last_price };
 }
