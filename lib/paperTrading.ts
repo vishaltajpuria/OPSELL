@@ -270,6 +270,29 @@ export function markToMarket(
   return { premium, underlyingPrice: spotQ.last_price };
 }
 
+function spreadMarginOrders(shortTradingsymbol: string, longTradingsymbol: string, quantity: number): MarginOrder[] {
+  return [
+    {
+      exchange: "NFO",
+      tradingsymbol: shortTradingsymbol,
+      transaction_type: "SELL",
+      variety: "regular",
+      product: "NRML",
+      order_type: "MARKET",
+      quantity,
+    },
+    {
+      exchange: "NFO",
+      tradingsymbol: longTradingsymbol,
+      transaction_type: "BUY",
+      variety: "regular",
+      product: "NRML",
+      order_type: "MARKET",
+      quantity,
+    },
+  ];
+}
+
 /**
  * Capital tied up by opening this plan, total ₹ (lots already applied):
  * "buy" is just the premium paid — no API call needed, always known.
@@ -284,26 +307,23 @@ export async function computeCapitalRequired(plan: TradePlan, lots: number, acce
     return plan.entryPremium * lots * plan.shortLeg.lotSize;
   }
   if (!plan.longLeg) return null;
-  const quantity = lots * plan.shortLeg.lotSize;
-  const orders: MarginOrder[] = [
-    {
-      exchange: "NFO",
-      tradingsymbol: plan.shortLeg.tradingsymbol,
-      transaction_type: "SELL",
-      variety: "regular",
-      product: "NRML",
-      order_type: "MARKET",
-      quantity,
-    },
-    {
-      exchange: "NFO",
-      tradingsymbol: plan.longLeg.tradingsymbol,
-      transaction_type: "BUY",
-      variety: "regular",
-      product: "NRML",
-      order_type: "MARKET",
-      quantity,
-    },
-  ];
+  const orders = spreadMarginOrders(plan.shortLeg.tradingsymbol, plan.longLeg.tradingsymbol, lots * plan.shortLeg.lotSize);
+  return getBasketMargin(orders, accessToken);
+}
+
+/**
+ * Fills in capitalRequired for a trade that doesn't have one yet — either
+ * it predates the field being tracked at all, or the margin lookup failed
+ * when it was opened. Computed from the trade's own already-stored data
+ * (no fresh option-chain fetch needed), so it's cheap to try on every Live
+ * refresh. A no-op (returns the existing value unchanged) once it's known.
+ */
+export async function backfillCapitalRequired(trade: PaperTrade, accessToken: string): Promise<number | null> {
+  if (typeof trade.capitalRequired === "number") return trade.capitalRequired;
+  if (trade.mode === "buy") {
+    return trade.entryPremium * trade.lots * trade.lotSize;
+  }
+  if (!trade.longLeg) return null;
+  const orders = spreadMarginOrders(trade.shortLeg.tradingsymbol, trade.longLeg.tradingsymbol, trade.lots * trade.lotSize);
   return getBasketMargin(orders, accessToken);
 }

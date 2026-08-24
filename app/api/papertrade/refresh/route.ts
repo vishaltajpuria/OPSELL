@@ -2,14 +2,17 @@ import { NextResponse } from "next/server";
 import { isConnected } from "@/lib/session";
 import { requireAccessToken } from "@/lib/kite";
 import { batchQuote } from "@/lib/quoteBatch";
-import { tradeQuoteKeys, markToMarket } from "@/lib/paperTrading";
+import { tradeQuoteKeys, markToMarket, backfillCapitalRequired } from "@/lib/paperTrading";
 import { getPaperTrades, savePaperTrades } from "@/lib/kv";
 
 export const dynamic = "force-dynamic";
 
 // The "Live" button: fetches current quotes for every OPEN trade's option
 // leg(s) plus underlying spot in one batched call, and marks each trade to
-// market. Never auto-closes anything — exits are manual only.
+// market. Also opportunistically backfills capitalRequired for any open
+// trade that doesn't have one yet (predates that field, or its margin
+// lookup failed at entry) — cheap since it's a no-op for trades that
+// already have it. Never auto-closes anything — exits are manual only.
 export async function POST() {
   if (!isConnected()) {
     return NextResponse.json({ error: "Not connected to Zerodha." }, { status: 401 });
@@ -37,6 +40,14 @@ export async function POST() {
       trade.lastMarkPremium = mark.premium;
       trade.lastMarkAt = now;
     }
+
+    await Promise.all(
+      openTrades
+        .filter((t) => typeof t.capitalRequired !== "number")
+        .map(async (t) => {
+          t.capitalRequired = await backfillCapitalRequired(t, accessToken);
+        })
+    );
 
     await savePaperTrades(trades);
     return NextResponse.json({ trades, refreshedAt: now, stale });
