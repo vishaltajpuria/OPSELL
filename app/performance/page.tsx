@@ -1,0 +1,129 @@
+import { redirect } from "next/navigation";
+import { isConnected } from "@/lib/session";
+import { getPaperTrades } from "@/lib/kv";
+import { computePerformance } from "@/lib/performance";
+
+export const dynamic = "force-dynamic";
+
+function fmt(n: number, digits = 0) {
+  return n.toLocaleString("en-IN", { maximumFractionDigits: digits, minimumFractionDigits: digits });
+}
+function signedFmt(n: number, digits = 0) {
+  return `${n >= 0 ? "+" : ""}${fmt(n, digits)}`;
+}
+function monthLabel(month: string) {
+  const [y, m] = month.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString("en-IN", { month: "short", year: "numeric", timeZone: "UTC" });
+}
+
+export default async function PerformancePage() {
+  if (!isConnected()) redirect("/settings");
+
+  let error: string | null = null;
+  let summary: ReturnType<typeof computePerformance> | null = null;
+  try {
+    const trades = await getPaperTrades();
+    summary = computePerformance(trades);
+  } catch (err) {
+    error = err instanceof Error ? err.message : "Failed to load performance data.";
+  }
+
+  const maxAbsCumulative = summary ? Math.max(1, ...summary.cumulativePnl.map((c) => Math.abs(c.cumulative))) : 1;
+
+  return (
+    <main className="px-4 pt-6 pb-4">
+      <h1 className="text-xl font-semibold">Performance</h1>
+      <p className="mt-1 text-sm text-muted">
+        Realized returns from closed paper trades, on the capital those trades required — nothing here counts a
+        position until it's actually closed.
+      </p>
+
+      {error && (
+        <p className="mt-4 rounded-lg border border-danger/40 bg-danger/10 p-3 text-sm text-danger">{error}</p>
+      )}
+
+      {!error && summary && summary.overall.tradeCount === 0 && (
+        <div className="mt-6 rounded-xl border border-border bg-surface p-5 text-center">
+          <p className="text-3xl">📈</p>
+          <p className="mt-3 text-sm text-muted">No closed paper trades yet — this fills in once you close a position.</p>
+        </div>
+      )}
+
+      {!error && summary && summary.overall.tradeCount > 0 && (
+        <>
+          <div className="mt-4 rounded-xl border border-border bg-surface p-4">
+            <p className="text-xs text-muted">Overall return on capital deployed</p>
+            <p className={`mt-1 text-2xl font-semibold ${summary.overall.totalPnl >= 0 ? "text-accent" : "text-danger"}`}>
+              {summary.overall.returnPercent !== null ? `${signedFmt(summary.overall.returnPercent, 1)}%` : "—"}
+            </p>
+            <div className="mt-3 grid grid-cols-2 gap-y-1.5 text-sm">
+              <span className="text-muted">Realized P&amp;L</span>
+              <span className={`text-right font-medium ${summary.overall.totalPnl >= 0 ? "text-accent" : "text-danger"}`}>
+                ₹{signedFmt(summary.overall.totalPnl)}
+              </span>
+              <span className="text-muted">Capital deployed</span>
+              <span className="text-right font-medium">₹{fmt(summary.overall.totalCapital)}</span>
+              <span className="text-muted">Closed trades</span>
+              <span className="text-right font-medium">
+                {summary.overall.tradeCount} ({summary.overall.wins}W / {summary.overall.losses}L)
+              </span>
+            </div>
+            {summary.overall.unknownCapitalCount > 0 && (
+              <p className="mt-2 text-[10px] text-danger">
+                {summary.overall.unknownCapitalCount} closed trade{summary.overall.unknownCapitalCount === 1 ? "" : "s"} had no
+                capital figure and {summary.overall.unknownCapitalCount === 1 ? "isn't" : "aren't"} included in the capital or
+                return figures above (P&amp;L is).
+              </p>
+            )}
+            {summary.openPositionsUnrealizedPnl !== 0 && (
+              <p className="mt-2 text-[10px] text-muted">
+                Open positions currently mark {summary.openPositionsUnrealizedPnl >= 0 ? "+" : ""}
+                ₹{fmt(summary.openPositionsUnrealizedPnl)} unrealized — not counted above until closed.
+              </p>
+            )}
+          </div>
+
+          <h2 className="mt-5 text-xs font-semibold uppercase tracking-wide text-muted">Capital growth (cumulative P&L)</h2>
+          <ul className="mt-2 divide-y divide-border overflow-hidden rounded-xl border border-border">
+            {summary.cumulativePnl.map((c) => {
+              const widthPct = Math.max(2, (Math.abs(c.cumulative) / maxAbsCumulative) * 100);
+              return (
+                <li key={c.month} className="relative bg-surface px-4 py-3">
+                  <div
+                    className={`absolute inset-y-0 left-0 ${c.cumulative >= 0 ? "bg-accent/10" : "bg-danger/10"}`}
+                    style={{ width: `${widthPct}%` }}
+                  />
+                  <div className="relative flex items-center justify-between">
+                    <span className="font-medium">{monthLabel(c.month)}</span>
+                    <span className={`text-sm font-semibold ${c.cumulative >= 0 ? "text-accent" : "text-danger"}`}>
+                      ₹{signedFmt(c.cumulative)}
+                    </span>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+
+          <h2 className="mt-5 text-xs font-semibold uppercase tracking-wide text-muted">Monthly returns</h2>
+          <ul className="mt-2 divide-y divide-border overflow-hidden rounded-xl border border-border">
+            {summary.monthly.map((m) => (
+              <li key={m.month} className="bg-surface px-4 py-3">
+                <div className="flex items-center justify-between">
+                  <span className="font-medium">{monthLabel(m.month)}</span>
+                  <span className={`text-sm font-semibold ${m.totalPnl >= 0 ? "text-accent" : "text-danger"}`}>
+                    {m.returnPercent !== null ? `${signedFmt(m.returnPercent, 1)}%` : "—"}
+                  </span>
+                </div>
+                <div className="mt-1 text-[11px] text-muted">
+                  ₹{signedFmt(m.totalPnl)} on ₹{fmt(m.totalCapital)} capital · {m.tradeCount} trade{m.tradeCount === 1 ? "" : "s"} (
+                  {m.wins}W / {m.losses}L)
+                  {m.unknownCapitalCount > 0 && ` · ${m.unknownCapitalCount} excluded (no capital figure)`}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </main>
+  );
+}

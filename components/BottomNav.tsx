@@ -7,6 +7,7 @@ const TABS = [
   { href: "/strategy", label: "Strategy", icon: "\u{1F916}" },
   { href: "/paper", label: "Trade", icon: "\u{1F4DD}" },
   { href: "/positions", label: "Positions", icon: "\u{1F4BC}" },
+  { href: "/performance", label: "Performance", icon: "\u{1F4C8}" },
   { href: "/settings", label: "Settings", icon: "\u{2699}\u{FE0F}" },
 ];
 
