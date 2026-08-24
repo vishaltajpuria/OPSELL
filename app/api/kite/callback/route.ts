@@ -23,7 +23,7 @@ export async function GET(request: NextRequest) {
     } catch {
       // ignored — the daily routine just won't have a token to work with yet
     }
-    const response = NextResponse.redirect(new URL("/stocks", request.url));
+    const response = NextResponse.redirect(new URL("/strategy", request.url));
     response.cookies.set(KITE_TOKEN_COOKIE, session.access_token, {
       httpOnly: true,
       secure: true,
