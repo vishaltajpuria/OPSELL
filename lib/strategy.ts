@@ -10,10 +10,21 @@ const SMA_SEQUENCE = [20, 50, 100, 200] as const;
 // Enough trading days for SMA200 to warm up plus a safety buffer.
 const MIN_CANDLES = 210;
 
+// How many bars back to search for a still-unresolved crossover, not just
+// today's. Matches backtestSymbol's own DEFAULT_MAX_HOLD_BARS: a crossover
+// older than this wouldn't be treated as an actionable open trade by the
+// backtest engine either, so there's no reason the live scanner should keep
+// surfacing it indefinitely.
+const DEFAULT_MAX_LOOKBACK_BARS = 90;
+
 export type SmaPoint = { period: number; value: number };
 
 export type StrategySignal = {
   direction: "short" | "long";
+  // The day the crossover actually happened — NOT necessarily today's date.
+  // A signal keeps firing on every day after its trigger day for as long as
+  // it stays valid (see below), so this is how a caller can tell how old it
+  // is.
   signalDate: string;
   entryPrice: number;
   supertrendValue: number;
@@ -23,20 +34,33 @@ export type StrategySignal = {
 
 /**
  * Checks each adjacent pair in the SMA sequence (20->50, 50->100, 100->200)
- * for a fresh crossover of the Supertrend line on the most recent candle.
+ * for a crossover of the Supertrend line that is still live today — either
+ * it happened on the most recent candle, or it happened up to
+ * maxLookbackBars ago and Supertrend hasn't flipped against it on any day
+ * since. A trade doesn't stop being valid just because a few days passed
+ * without the setup breaking; it's the Supertrend flip itself, not the
+ * calendar, that invalidates it. (Before this, the function only ever
+ * checked the single latest candle, so a stock would silently disappear
+ * from the daily list the day after its crossover even though nothing about
+ * the setup had actually changed.)
  *
- * SHORT requires all of:
+ * SHORT requires all of, evaluated on the crossover's own day:
  *  - Supertrend "up" (green)
  *  - the Heikin Ashi candle close still above the Supertrend line
  *  - the trigger SMA just crossed from at/below the line to above it
  *  - the target SMA (next rung out) is still below the line — i.e. only the
  *    faster average has caught up to Supertrend, not the slower one yet
+ * ...and, evaluated on every day from the crossover through today: Supertrend
+ * has stayed "up" (never flipped to "down"). LONG is the mirror image.
  *
- * LONG is the mirror image (Supertrend "down", HA close below the line, an
- * SMA crossing from at/above to below it, target SMA still above the line).
- *
- * Multiple rungs can fire on the same candle; all are returned. entryPrice
- * is the real (non-Heikin-Ashi) close, since that's what's actually tradeable.
+ * Multiple rungs can fire at once; all are returned, at most one crossover
+ * per rung (the most recent one that hasn't since been invalidated — an
+ * older one behind it would share the same invalidating flip, if any, so
+ * there's no need to look further back once one is found). entryPrice,
+ * supertrendValue, and both SmaPoints reflect TODAY's values regardless of
+ * which day the crossover itself happened on, since those are what's
+ * actionable for a decision made today; only signalDate reflects the
+ * original trigger day.
  *
  * Supertrend and the SMAs are both computed on Heikin Ashi candles, not real
  * OHLC. This matches how the reference TradingView chart actually plots them:
@@ -45,7 +69,10 @@ export type StrategySignal = {
  * real market prices, unless a script explicitly re-requests raw data. Only
  * entryPrice stays real, since that's the only one of these that's tradeable.
  */
-export function detectSignals(candles: Candle[]): StrategySignal[] {
+export function detectSignals(
+  candles: Candle[],
+  maxLookbackBars: number = DEFAULT_MAX_LOOKBACK_BARS
+): StrategySignal[] {
   if (candles.length < MIN_CANDLES) return [];
 
   const heikinAshi = toHeikinAshi(candles);
@@ -53,17 +80,9 @@ export function detectSignals(candles: Candle[]): StrategySignal[] {
   const smas = new Map(SMA_SEQUENCE.map((period) => [period, computeSMA(heikinAshi, period)]));
 
   const i = candles.length - 1;
-  const prev = i - 1;
-  if (prev < 0) return [];
-
-  const curSt = supertrend[i];
-  const prevSt = supertrend[prev];
-  if (Number.isNaN(curSt.value) || Number.isNaN(prevSt.value)) return [];
-
-  const haClose = heikinAshi[i].close;
   const entryPrice = candles[i].close;
-  const signalDate = candles[i].date;
   const signals: StrategySignal[] = [];
+  const earliestK = Math.max(1, i - maxLookbackBars);
 
   for (let idx = 0; idx < SMA_SEQUENCE.length - 1; idx++) {
     const period = SMA_SEQUENCE[idx];
@@ -71,38 +90,49 @@ export function detectSignals(candles: Candle[]): StrategySignal[] {
     const series = smas.get(period)!;
     const targetSeries = smas.get(nextPeriod)!;
 
-    const cur = series[i];
-    const prevVal = series[prev];
-    const targetValue = targetSeries[i];
-    if ([cur, prevVal, targetValue].some(Number.isNaN)) continue;
+    for (let k = i; k >= earliestK; k--) {
+      const prev = k - 1;
+      const curSt = supertrend[k];
+      const prevSt = supertrend[prev];
+      if (Number.isNaN(curSt.value) || Number.isNaN(prevSt.value)) break; // ran off the front of the indicators' warm-up
 
-    const targetSma: SmaPoint = { period: nextPeriod, value: targetValue };
+      const cur = series[k];
+      const prevVal = series[prev];
+      const targetValue = targetSeries[k];
+      if ([cur, prevVal, targetValue].some(Number.isNaN)) continue;
 
-    const shortCross = prevVal <= prevSt.value && cur > curSt.value;
-    const targetStillBelowLine = targetValue < curSt.value;
-    if (shortCross && curSt.trend === "up" && haClose > curSt.value && targetStillBelowLine) {
-      signals.push({
-        direction: "short",
-        signalDate,
-        entryPrice,
-        supertrendValue: curSt.value,
-        triggerSma: { period, value: cur },
-        targetSma,
-      });
-      continue;
-    }
+      const haCloseK = heikinAshi[k].close;
 
-    const longCross = prevVal >= prevSt.value && cur < curSt.value;
-    const targetStillAboveLine = targetValue > curSt.value;
-    if (longCross && curSt.trend === "down" && haClose < curSt.value && targetStillAboveLine) {
-      signals.push({
-        direction: "long",
-        signalDate,
-        entryPrice,
-        supertrendValue: curSt.value,
-        triggerSma: { period, value: cur },
-        targetSma,
-      });
+      const shortCross = prevVal <= prevSt.value && cur > curSt.value;
+      const targetStillBelowLine = targetValue < curSt.value;
+      const isShort = shortCross && curSt.trend === "up" && haCloseK > curSt.value && targetStillBelowLine;
+
+      const longCross = prevVal >= prevSt.value && cur < curSt.value;
+      const targetStillAboveLine = targetValue > curSt.value;
+      const isLong = longCross && curSt.trend === "down" && haCloseK < curSt.value && targetStillAboveLine;
+
+      if (!isShort && !isLong) continue;
+
+      const direction: "short" | "long" = isShort ? "short" : "long";
+      const stillLive = supertrend
+        .slice(k, i + 1)
+        .every((pt) => pt.trend === (direction === "short" ? "up" : "down"));
+
+      if (stillLive) {
+        const curSma = series[i];
+        const curTarget = targetSeries[i];
+        if (![curSma, curTarget].some(Number.isNaN)) {
+          signals.push({
+            direction,
+            signalDate: candles[k].date,
+            entryPrice,
+            supertrendValue: supertrend[i].value,
+            triggerSma: { period, value: curSma },
+            targetSma: { period: nextPeriod, value: curTarget },
+          });
+        }
+      }
+      break; // this rung's most recent qualifying crossover has been resolved either way — no need to look further back
     }
   }
 

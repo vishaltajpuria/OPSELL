@@ -13,6 +13,11 @@ import { runRateLimited } from "@/lib/rateLimit";
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DAILY_LOOKBACK_DAYS = 500; // comfortably covers SMA200 warm-up + buffer
 const HOURLY_LOOKBACK_DAYS = 380; // under Kite's 400-day cap for 60minute interval
+// detectSignals' default lookback (90 bars) assumes daily bars; scaled up
+// for 4H (~2 bars/day) so it covers roughly the same real-world window
+// instead of quietly becoming ~45 calendar days — same reasoning as the
+// backtest tool's maxHoldBars scaling.
+const FOUR_HOUR_MAX_LOOKBACK_BARS = 180;
 
 function isoDate(d: Date): string {
   return d.toISOString().slice(0, 10);
@@ -149,7 +154,7 @@ export async function run4HTimeframeStrategy(accessToken: string, batchId: Batch
       if (!token) return;
       const hourly = await getHistoricalCandles(token, "60minute", fromHourly, to, accessToken);
       const fourHour = resampleTo4H(hourly);
-      for (const signal of detectSignals(fourHour)) {
+      for (const signal of detectSignals(fourHour, FOUR_HOUR_MAX_LOOKBACK_BARS)) {
         signals.push({ symbol, timeframe: "4H", ...signal });
       }
     } catch (err) {
@@ -167,7 +172,7 @@ export async function run4HTimeframeStrategy(accessToken: string, batchId: Batch
       try {
         const hourly = await getHistoricalCandles(token, "60minute", fromHourly, to, accessToken);
         const fourHour = resampleTo4H(hourly);
-        for (const signal of detectSignals(fourHour)) {
+        for (const signal of detectSignals(fourHour, FOUR_HOUR_MAX_LOOKBACK_BARS)) {
           signals.push({ symbol: def.key, timeframe: "4H", ...signal });
         }
       } catch (err) {
