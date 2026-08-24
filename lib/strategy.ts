@@ -36,13 +36,12 @@ export type StrategySignal = {
  * Checks each adjacent pair in the SMA sequence (20->50, 50->100, 100->200)
  * for a crossover of the Supertrend line that is still live today — either
  * it happened on the most recent candle, or it happened up to
- * maxLookbackBars ago and Supertrend hasn't flipped against it on any day
- * since. A trade doesn't stop being valid just because a few days passed
- * without the setup breaking; it's the Supertrend flip itself, not the
- * calendar, that invalidates it. (Before this, the function only ever
- * checked the single latest candle, so a stock would silently disappear
- * from the daily list the day after its crossover even though nothing about
- * the setup had actually changed.)
+ * maxLookbackBars ago and hasn't been invalidated on any day since. A trade
+ * doesn't stop being valid just because a few days passed without the setup
+ * breaking; it's an actual reversal, not the calendar, that invalidates it.
+ * (Before this, the function only ever checked the single latest candle, so
+ * a stock would silently disappear from the daily list the day after its
+ * crossover even though nothing about the setup had actually changed.)
  *
  * SHORT requires all of, evaluated on the crossover's own day:
  *  - Supertrend "up" (green)
@@ -51,7 +50,17 @@ export type StrategySignal = {
  *  - the target SMA (next rung out) is still below the line — i.e. only the
  *    faster average has caught up to Supertrend, not the slower one yet
  * ...and, evaluated on every day from the crossover through today: Supertrend
- * has stayed "up" (never flipped to "down"). LONG is the mirror image.
+ * has stayed "up" AND the trigger SMA has stayed above the Supertrend line.
+ * Both matter, not just the Supertrend trend flag — Supertrend can stay
+ * "up" (price still above the lower band) while the trigger SMA itself
+ * pops above the line for a day or two and then falls back below it, a
+ * throwback that isn't a full trend reversal but does mean the specific
+ * crossover this signal is based on no longer holds. Checking only the
+ * Supertrend flag let a one-day blip from weeks ago keep firing long after
+ * the SMA itself had reverted — a real gap, not just a hypothetical one:
+ * caught via PAYTM, where SMA20 popped above Supertrend for exactly one day
+ * then spent the next three weeks back below it while Supertrend's own
+ * trend label never flipped. LONG is the mirror image.
  *
  * Multiple rungs can fire at once; all are returned, at most one crossover
  * per rung (the most recent one that hasn't since been invalidated — an
@@ -114,9 +123,17 @@ export function detectSignals(
       if (!isShort && !isLong) continue;
 
       const direction: "short" | "long" = isShort ? "short" : "long";
-      const stillLive = supertrend
-        .slice(k, i + 1)
-        .every((pt) => pt.trend === (direction === "short" ? "up" : "down"));
+      let stillLive = true;
+      for (let j = k; j <= i; j++) {
+        const stJ = supertrend[j];
+        const smaJ = series[j];
+        const trendOk = stJ.trend === (direction === "short" ? "up" : "down");
+        const smaOnCorrectSide = direction === "short" ? smaJ > stJ.value : smaJ < stJ.value;
+        if (!trendOk || Number.isNaN(smaJ) || !smaOnCorrectSide) {
+          stillLive = false;
+          break;
+        }
+      }
 
       if (stillLive) {
         const curSma = series[i];
