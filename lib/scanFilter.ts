@@ -12,8 +12,10 @@ export const TOP_N = 80;
 
 export type ScanCandidateInputs = {
   name: string;
-  oi: number; // near-month futures open interest, 0 if no futures data
-  futVolume: number; // today's near-month futures volume, 0 if no futures data
+  oi: number; // near-month futures open interest, in shares — raw, kept for debugging only
+  futVolume: number; // today's near-month futures volume, in shares — raw, kept for debugging only
+  oiValue: number; // oi * futures price — notional ₹ value of open interest; this is what's actually ranked
+  volValue: number; // futVolume * futures price — notional ₹ value traded today; this is what's actually ranked
   pctMove: number; // today's absolute % move in the spot price
 };
 
@@ -40,10 +42,19 @@ export type ScannedCandidate = ScanCandidateInputs & {
  * in the same batch, not its own history — a true "volume vs. its own
  * 20-day average" spike detector would need a stored historical baseline,
  * not attempted here):
- *  - near-month futures open interest, 40% — a liquidity floor: a reversal
- *    signal on a name with no real option liquidity isn't tradable anyway.
- *  - today's futures volume, 30% — today's F&O trading activity.
+ *  - near-month futures open interest VALUE (oi shares * futures price),
+ *    40% — a liquidity floor: a reversal signal on a name with no real
+ *    option liquidity isn't tradable anyway.
+ *  - today's futures volume VALUE (volume shares * futures price), 30% —
+ *    today's F&O trading activity.
  *  - today's absolute % move in the spot price, 30% — today's price activity.
+ * OI/volume are ranked by notional ₹ value, not raw share count — NSE sets
+ * each stock's lot size to target a roughly fixed contract value, so a
+ * ₹11,000 stock trades in tiny lots and a ₹100 stock trades in huge ones.
+ * Ranking on raw shares would systematically punish expensive, small-lot
+ * names regardless of how liquid they actually are (this was a real bug:
+ * Bajaj Auto, one of the most liquid single-stock F&O names on NSE, ranked
+ * in the bottom 10% on raw-share OI/volume purely because of its price).
  * Volume and price movement together are the cheap, same-day proxy for
  * "something unusual is happening" (climax/exhaustion-style activity) that
  * tends to precede or accompany a genuine reversal — without needing a
@@ -52,8 +63,8 @@ export type ScannedCandidate = ScanCandidateInputs & {
  * (see the debug route) rather than only getting a pass/fail cut.
  */
 export function rankAllCandidates(inputs: ScanCandidateInputs[]): ScannedCandidate[] {
-  const oiRanks = percentileRanks(inputs.map((r) => r.oi));
-  const volRanks = percentileRanks(inputs.map((r) => r.futVolume));
+  const oiRanks = percentileRanks(inputs.map((r) => r.oiValue));
+  const volRanks = percentileRanks(inputs.map((r) => r.volValue));
   const moveRanks = percentileRanks(inputs.map((r) => r.pctMove));
 
   return inputs
@@ -100,10 +111,15 @@ export async function computeScanInputs(stocks: FnoStock[], accessToken: string)
     const spot = spotQuotes[`NSE:${s.name}`];
     const prevClose = spot?.ohlc?.close ?? null;
     const pctMove = spot && prevClose ? Math.abs((spot.last_price - prevClose) / prevClose) * 100 : 0;
+    const oi = futureQuote?.oi ?? 0;
+    const futVolume = futureQuote?.volume ?? 0;
+    const futuresPrice = futureQuote?.last_price ?? 0;
     return {
       name: s.name,
-      oi: futureQuote?.oi ?? 0,
-      futVolume: futureQuote?.volume ?? 0,
+      oi,
+      futVolume,
+      oiValue: oi * futuresPrice,
+      volValue: futVolume * futuresPrice,
       pctMove,
     };
   });
