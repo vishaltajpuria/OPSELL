@@ -137,7 +137,15 @@ const PAPER_TRADES_KEY = "papertrades:all";
 // (no automated writer), so volume stays low enough that this doesn't need
 // the per-batch key sharding the signals cache uses.
 export async function getPaperTrades(): Promise<PaperTrade[]> {
-  return (await getRedis().get<PaperTrade[]>(PAPER_TRADES_KEY)) ?? [];
+  const trades = (await getRedis().get<PaperTrade[]>(PAPER_TRADES_KEY)) ?? [];
+  // Trades opened before capitalRequired existed have no such field in
+  // storage at all (undefined, not null) — normalize here so every caller
+  // downstream can rely on the field always being present, rather than
+  // each one separately having to treat "missing" and "known null" the
+  // same way (a bug that shipped once already: PaperTradePositions.tsx
+  // checked `!== null`, which is true for undefined too, and crashed
+  // trying to format it as a number).
+  return trades.map((t) => ({ ...t, capitalRequired: t.capitalRequired ?? null }));
 }
 
 export async function savePaperTrades(trades: PaperTrade[]): Promise<void> {

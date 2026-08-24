@@ -111,7 +111,11 @@ export default function PaperTradePositions() {
 
   const openTrades = trades.filter((t) => t.status === "open");
   const closedTrades = trades.filter((t) => t.status === "closed");
-  const knownCapital = openTrades.filter((t) => t.capitalRequired !== null);
+  // typeof check, not !== null: a trade opened before capitalRequired
+  // existed has no such field in storage at all (undefined at runtime,
+  // even though the type says it's always present) — treating that the
+  // same as "known" crashed the page trying to format it as a number.
+  const knownCapital = openTrades.filter((t) => typeof t.capitalRequired === "number");
   const totalCapital = knownCapital.reduce((sum, t) => sum + (t.capitalRequired as number), 0);
   const unknownCapitalCount = openTrades.length - knownCapital.length;
 
@@ -176,7 +180,7 @@ export default function PaperTradePositions() {
                 {t.expiry}
               </div>
               <div className="mt-0.5 text-[11px] text-muted">
-                Capital {t.capitalRequired !== null ? `₹${fmt(t.capitalRequired, 0)}` : "unknown (margin lookup failed)"}
+                Capital {typeof t.capitalRequired === "number" ? `₹${fmt(t.capitalRequired, 0)}` : "unknown (margin lookup failed)"}
               </div>
               <button
                 onClick={() => closeTrade(t.id)}
