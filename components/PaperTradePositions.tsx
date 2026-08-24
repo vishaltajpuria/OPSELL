@@ -67,6 +67,7 @@ export default function PaperTradePositions() {
   const [closingId, setClosingId] = useState<string | null>(null);
   const [refreshedAt, setRefreshedAt] = useState<string | null>(null);
   const [adjustment, setAdjustment] = useState<Adjustment | null>(null);
+  const [merging, setMerging] = useState(false);
 
   const load = useCallback(async () => {
     setStatus("loading");
@@ -86,6 +87,21 @@ export default function PaperTradePositions() {
   useEffect(() => {
     load();
   }, [load]);
+
+  async function mergeDuplicates() {
+    setMerging(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/papertrade/merge", { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to merge duplicate positions.");
+      setTrades(data.trades);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setMerging(false);
+    }
+  }
 
   async function refreshLive() {
     setStatus("refreshing");
@@ -176,8 +192,37 @@ export default function PaperTradePositions() {
   const totalCapital = knownCapital.reduce((sum, t) => sum + (t.capitalRequired as number), 0);
   const unknownCapitalCount = openTrades.length - knownCapital.length;
 
+  // Same-contract duplicates — e.g. the same symbol/mode/strike opened
+  // twice — surfaced here purely to decide whether to show the merge
+  // banner; the actual merge math runs server-side (mergeOpenTradeGroup in
+  // lib/paperTrading.ts) since it needs a fresh margin lookup for the
+  // combined size.
+  const duplicateKeys = new Set<string>();
+  const seenKeys = new Set<string>();
+  for (const t of openTrades) {
+    const key = [t.symbol, t.mode, t.shortLeg.tradingsymbol, t.longLeg?.tradingsymbol ?? ""].join("|");
+    if (seenKeys.has(key)) duplicateKeys.add(key);
+    seenKeys.add(key);
+  }
+
   return (
     <div>
+      {duplicateKeys.size > 0 && (
+        <div className="mb-3 flex items-center justify-between gap-3 rounded-xl border border-accent/40 bg-accent/5 p-3">
+          <p className="text-xs">
+            {duplicateKeys.size} position{duplicateKeys.size === 1 ? "" : "s"} split across duplicate entries — same
+            strike, showing separately.
+          </p>
+          <button
+            onClick={mergeDuplicates}
+            disabled={merging}
+            className="shrink-0 rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-black disabled:opacity-50"
+          >
+            {merging ? "Merging…" : "Merge"}
+          </button>
+        </div>
+      )}
+
       {openTrades.length > 0 && (
         <div className="rounded-xl border border-border bg-surface p-4">
           <p className="text-xs text-muted">Total capital deployed</p>

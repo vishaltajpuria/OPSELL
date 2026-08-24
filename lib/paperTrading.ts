@@ -387,3 +387,59 @@ export function computePartialClose(
     remainingCapitalRequired: remainingLots > 0 && capitalPerLot !== null ? capitalPerLot * remainingLots : null,
   };
 }
+
+/** Identifies the exact contract a trade holds — same underlying, mode, and leg(s) — so two records can be recognized as genuinely the same position rather than merely the same symbol at a different strike or mode. */
+function duplicateGroupKey(trade: Pick<PaperTrade, "symbol" | "mode" | "shortLeg" | "longLeg">): string {
+  return [trade.symbol, trade.mode, trade.shortLeg.tradingsymbol, trade.longLeg?.tradingsymbol ?? ""].join("|");
+}
+
+/**
+ * Finds sets of 2+ open trades that are the exact same contract — true
+ * duplicates (e.g. from opening a position twice before the same-strike
+ * reuse guard existed, or a submit race), not just the same underlying at a
+ * different strike or in a different mode, which are legitimately separate
+ * positions.
+ */
+export function findDuplicateOpenGroups(trades: PaperTrade[]): PaperTrade[][] {
+  const byKey = new Map<string, PaperTrade[]>();
+  for (const t of trades) {
+    if (t.status !== "open" || t.lots <= 0) continue;
+    const key = duplicateGroupKey(t);
+    const arr = byKey.get(key) ?? [];
+    arr.push(t);
+    byKey.set(key, arr);
+  }
+  return Array.from(byKey.values()).filter((g) => g.length > 1);
+}
+
+/**
+ * Combines a group of duplicate open trades (same symbol/mode/legs) into a
+ * single PaperTrade: lots sum, entryPremium becomes the lots-weighted
+ * average across the group (same averaging-in logic as a top-up), and
+ * closedLots histories are concatenated so no realized P&L from either
+ * record is lost. The earliest trade's id/entryAt/entryUnderlyingPrice/
+ * expiry become the merged trade's identity. capitalRequired is left null
+ * here — two duplicates opened days apart may have priced margin
+ * differently, so the caller re-prices it fresh for the combined lot count
+ * rather than summing two possibly-stale figures.
+ */
+export function mergeOpenTradeGroup(group: PaperTrade[]): PaperTrade {
+  const sorted = [...group].sort((a, b) => a.entryAt.localeCompare(b.entryAt));
+  const earliest = sorted[0];
+  const totalLots = sorted.reduce((sum, t) => sum + t.lots, 0);
+  const entryPremium = sorted.reduce((sum, t) => sum + t.entryPremium * t.lots, 0) / totalLots;
+  const closedLots = sorted.flatMap((t) => t.closedLots).sort((a, b) => a.closedAt.localeCompare(b.closedAt));
+  const latestMarked = sorted
+    .filter((t) => typeof t.lastMarkAt === "string")
+    .sort((a, b) => (b.lastMarkAt as string).localeCompare(a.lastMarkAt as string))[0];
+
+  return {
+    ...earliest,
+    lots: totalLots,
+    entryPremium,
+    closedLots,
+    lastMarkPremium: latestMarked?.lastMarkPremium ?? null,
+    lastMarkAt: latestMarked?.lastMarkAt ?? null,
+    capitalRequired: null,
+  };
+}
