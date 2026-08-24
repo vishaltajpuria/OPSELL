@@ -18,6 +18,7 @@ type PaperTrade = {
   entryAt: string;
   entryUnderlyingPrice: number;
   entryPremium: number;
+  capitalRequired: number | null;
   status: "open" | "closed";
   exitAt: string | null;
   exitUnderlyingPrice: number | null;
@@ -110,10 +111,25 @@ export default function PaperTradePositions() {
 
   const openTrades = trades.filter((t) => t.status === "open");
   const closedTrades = trades.filter((t) => t.status === "closed");
+  const knownCapital = openTrades.filter((t) => t.capitalRequired !== null);
+  const totalCapital = knownCapital.reduce((sum, t) => sum + (t.capitalRequired as number), 0);
+  const unknownCapitalCount = openTrades.length - knownCapital.length;
 
   return (
     <div>
-      <div className="flex items-center justify-between gap-3">
+      {openTrades.length > 0 && (
+        <div className="rounded-xl border border-border bg-surface p-4">
+          <p className="text-xs text-muted">Total capital deployed</p>
+          <p className="mt-1 text-2xl font-semibold">₹{fmt(totalCapital, 0)}</p>
+          {unknownCapitalCount > 0 && (
+            <p className="mt-1 text-[10px] text-danger">
+              {unknownCapitalCount} open position{unknownCapitalCount === 1 ? "" : "s"} missing a margin figure — not included above.
+            </p>
+          )}
+        </div>
+      )}
+
+      <div className="mt-3 flex items-center justify-between gap-3">
         <p className="text-xs text-muted">
           {status === "loading" ? "Loading…" : `${openTrades.length} open · ${closedTrades.length} closed`}
         </p>
@@ -158,6 +174,9 @@ export default function PaperTradePositions() {
                 {t.mode === "sell" && t.longLeg && `Spread w/ ${legLabel(t.longLeg)} · `}
                 Entry {fmt(t.entryPremium)} → Now {fmt(currentPremium)} · {t.lots} lot{t.lots === 1 ? "" : "s"} × {t.lotSize} · exp{" "}
                 {t.expiry}
+              </div>
+              <div className="mt-0.5 text-[11px] text-muted">
+                Capital {t.capitalRequired !== null ? `₹${fmt(t.capitalRequired, 0)}` : "unknown (margin lookup failed)"}
               </div>
               <button
                 onClick={() => closeTrade(t.id)}

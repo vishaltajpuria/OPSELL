@@ -102,6 +102,66 @@ export async function getQuote(
   return json.data;
 }
 
+async function kitePostJson(path: string, accessToken: string, body: unknown) {
+  const res = await fetch(BASE_URL + path, {
+    method: "POST",
+    headers: {
+      Authorization: `token ${getApiKey()}:${accessToken}`,
+      "X-Kite-Version": "3",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    let message = `Kite API error (${res.status})`;
+    try {
+      const j = await res.json();
+      message = j.message ?? message;
+    } catch {
+      // response wasn't JSON; keep the generic message
+    }
+    throw new Error(message);
+  }
+  return res;
+}
+
+export type MarginOrder = {
+  exchange: string;
+  tradingsymbol: string;
+  transaction_type: "BUY" | "SELL";
+  variety: "regular";
+  product: "NRML" | "MIS";
+  order_type: "MARKET";
+  quantity: number;
+  price?: number;
+  trigger_price?: number;
+};
+
+/**
+ * Theoretical margin required for a basket of orders taken together — no
+ * real order is placed. Used to size a credit spread's net capital
+ * requirement: the long leg reduces margin vs. a naked short, and this is
+ * the hedge-aware number Kite itself would actually block, not a manual
+ * SPAN/exposure estimate. Returns null (rather than throwing) if the
+ * response doesn't parse as expected, so a margin-API hiccup doesn't block
+ * opening a paper trade — the caller decides how to handle "unknown."
+ */
+export async function getBasketMargin(orders: MarginOrder[], accessToken: string): Promise<number | null> {
+  try {
+    const res = await kitePostJson(`/margins/basket?consider_positions=false`, accessToken, orders);
+    const json = await res.json();
+    const data = json?.data;
+    const ordersTotal = Array.isArray(data?.orders)
+      ? data.orders.reduce((sum: number, o: { total?: number }) => sum + (o.total ?? 0), 0)
+      : null;
+    const total = data?.final?.total ?? data?.initial?.total ?? ordersTotal;
+    return typeof total === "number" && Number.isFinite(total) ? total : null;
+  } catch {
+    return null;
+  }
+}
+
 export type Candle = {
   date: string;
   open: number;

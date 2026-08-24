@@ -114,6 +114,15 @@ export type PaperTrade = {
   entryAt: string; // ISO timestamp
   entryUnderlyingPrice: number;
   entryPremium: number; // per share/unit — net of both legs if a spread
+  // Capital tied up by this position, total ₹ (already scaled by lots *
+  // lotSize) — for "buy" this is just the premium paid, always known; for
+  // "sell" it's the real hedge-aware margin Kite's basket-margin endpoint
+  // would actually require, computed once at entry (not re-fetched by the
+  // Live button, so it stays a stable denominator for a return-on-capital
+  // calculation over the life of the trade). Null only if that margin
+  // lookup failed at entry time — the trade still opens, this position is
+  // just excluded from the capital-deployed total until you know it.
+  capitalRequired: number | null;
   status: "open" | "closed";
   exitAt: string | null;
   exitUnderlyingPrice: number | null;

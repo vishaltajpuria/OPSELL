@@ -1,6 +1,6 @@
 import { getOptionChain, spotQuoteKey, type ChainRow } from "@/lib/optionChain";
 import { getOptionExpiries } from "@/lib/instruments";
-import type { Quote } from "@/lib/kite";
+import { getBasketMargin, type Quote, type MarginOrder } from "@/lib/kite";
 import type { PaperTrade } from "@/lib/kv";
 
 // "Buy ATM option of current month expiry (if more than 12 trading sessions
@@ -268,4 +268,42 @@ export function markToMarket(
     premium = shortQ.last_price - longQ.last_price;
   }
   return { premium, underlyingPrice: spotQ.last_price };
+}
+
+/**
+ * Capital tied up by opening this plan, total ₹ (lots already applied):
+ * "buy" is just the premium paid — no API call needed, always known.
+ * "sell" is the real hedge-aware margin Kite's basket-margin endpoint would
+ * require for holding both legs together (the long leg reduces margin vs. a
+ * naked short) — held as NRML since a paper position isn't auto-squared off
+ * intraday. Returns null only if that margin lookup fails; the caller still
+ * opens the trade, just without a capital figure for it yet.
+ */
+export async function computeCapitalRequired(plan: TradePlan, lots: number, accessToken: string): Promise<number | null> {
+  if (plan.mode === "buy") {
+    return plan.entryPremium * lots * plan.shortLeg.lotSize;
+  }
+  if (!plan.longLeg) return null;
+  const quantity = lots * plan.shortLeg.lotSize;
+  const orders: MarginOrder[] = [
+    {
+      exchange: "NFO",
+      tradingsymbol: plan.shortLeg.tradingsymbol,
+      transaction_type: "SELL",
+      variety: "regular",
+      product: "NRML",
+      order_type: "MARKET",
+      quantity,
+    },
+    {
+      exchange: "NFO",
+      tradingsymbol: plan.longLeg.tradingsymbol,
+      transaction_type: "BUY",
+      variety: "regular",
+      product: "NRML",
+      order_type: "MARKET",
+      quantity,
+    },
+  ];
+  return getBasketMargin(orders, accessToken);
 }

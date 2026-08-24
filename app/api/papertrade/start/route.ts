@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { isConnected } from "@/lib/session";
-import { buildTradePlan } from "@/lib/paperTrading";
+import { requireAccessToken } from "@/lib/kite";
+import { buildTradePlan, computeCapitalRequired } from "@/lib/paperTrading";
 import { getPaperTrades, savePaperTrades, type PaperTrade } from "@/lib/kv";
 
 // Opens a new paper trade. Re-resolves the trade plan fresh (same as
@@ -28,6 +29,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const plan = await buildTradePlan(symbol, direction, mode);
+    const capitalRequired = await computeCapitalRequired(plan, lots, requireAccessToken());
     const now = new Date().toISOString();
     const trade: PaperTrade = {
       id: randomUUID(),
@@ -45,6 +47,7 @@ export async function POST(request: NextRequest) {
       entryAt: now,
       entryUnderlyingPrice: plan.underlyingPrice,
       entryPremium: plan.entryPremium,
+      capitalRequired,
       status: "open",
       exitAt: null,
       exitUnderlyingPrice: null,
