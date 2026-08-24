@@ -52,6 +52,33 @@ function legLabel(leg: PaperTradeLeg) {
   return `${leg.strike.toFixed(0)}${leg.optionType}`;
 }
 
+function DirectionBadge({ direction }: { direction: "short" | "long" }) {
+  return (
+    <span className={`text-[10px] font-semibold uppercase ${direction === "short" ? "text-danger" : "text-accent"}`}>
+      {direction}
+    </span>
+  );
+}
+
+/**
+ * A credit spread's max profit is the net credit collected (entryPremium),
+ * realized if both legs expire worthless with the underlying away from the
+ * short strike; max loss is capped at (strike width − that credit), hit
+ * once the underlying moves past both strikes — the whole reason a spread
+ * is bought against the naked short in the first place. Only meaningful
+ * for a sell-mode position with a protective long leg; naked buying has no
+ * such cap to show here (loss is capped at the premium paid, already shown
+ * as the position's capital; profit is uncapped).
+ */
+function spreadMaxProfitLoss(
+  t: Pick<PaperTrade, "mode" | "shortLeg" | "longLeg" | "entryPremium" | "lots" | "lotSize">
+): { maxProfit: number; maxLoss: number } | null {
+  if (t.mode !== "sell" || !t.longLeg) return null;
+  const width = Math.abs(t.longLeg.strike - t.shortLeg.strike);
+  const scale = t.lots * t.lotSize;
+  return { maxProfit: t.entryPremium * scale, maxLoss: (width - t.entryPremium) * scale };
+}
+
 type Adjustment = {
   tradeId: string;
   action: "increase" | "decrease";
@@ -266,11 +293,12 @@ export default function PaperTradePositions() {
           const perShare = pnlPerShare(t.mode, t.entryPremium, currentPremium);
           const total = perShare * t.lots * t.lotSize;
           const isAdjustingThis = adjustment?.tradeId === t.id;
+          const maxPL = spreadMaxProfitLoss(t);
           return (
             <li key={t.id} className="bg-surface px-4 py-3">
               <div className="flex items-center justify-between">
                 <span className="font-medium">
-                  {t.symbol}{" "}
+                  {t.symbol} <DirectionBadge direction={t.direction} />{" "}
                   <span className="text-[10px] font-normal text-muted">
                     {t.mode === "buy" ? "Buy" : "Sell"} {legLabel(t.shortLeg)}
                   </span>
@@ -285,6 +313,14 @@ export default function PaperTradePositions() {
               <div className="mt-0.5 text-[11px] text-muted">
                 Capital {typeof t.capitalRequired === "number" ? `₹${fmt(t.capitalRequired, 0)}` : "unknown (margin lookup failed)"}
               </div>
+              {maxPL && (
+                <div className="mt-0.5 text-[11px]">
+                  <span className="text-muted">Max profit </span>
+                  <span className="font-medium text-accent">₹{fmt(maxPL.maxProfit, 0)}</span>
+                  <span className="text-muted"> · Max loss </span>
+                  <span className="font-medium text-danger">₹{fmt(maxPL.maxLoss, 0)}</span>
+                </div>
+              )}
 
               {isAdjustingThis && adjustment && (
                 <div className="mt-2 rounded-lg border border-accent/40 bg-accent/5 p-2.5">
@@ -358,7 +394,7 @@ export default function PaperTradePositions() {
               <li key={`${t.id}-${i}`} className="bg-surface px-4 py-3">
                 <div className="flex items-center justify-between">
                   <span className="font-medium">
-                    {t.symbol}{" "}
+                    {t.symbol} <DirectionBadge direction={t.direction} />{" "}
                     <span className="text-[10px] font-normal text-muted">
                       {t.mode === "buy" ? "Buy" : "Sell"} {legLabel(t.shortLeg)}
                     </span>
