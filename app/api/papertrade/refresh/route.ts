@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { isConnected } from "@/lib/session";
-import { requireAccessToken } from "@/lib/kite";
+import { requireAccessToken, KiteAuthError } from "@/lib/kite";
 import { batchQuote } from "@/lib/quoteBatch";
 import { tradeQuoteKeys, markToMarket, backfillCapitalRequired } from "@/lib/paperTrading";
 import { getPaperTrades, savePaperTrades } from "@/lib/kv";
@@ -53,6 +53,6 @@ export async function POST() {
     return NextResponse.json({ trades, refreshedAt: now, stale });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to refresh live prices.";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: message }, { status: err instanceof KiteAuthError ? 401 : 500 });
   }
 }

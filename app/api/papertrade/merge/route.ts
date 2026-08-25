@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { isConnected } from "@/lib/session";
-import { requireAccessToken } from "@/lib/kite";
+import { requireAccessToken, KiteAuthError } from "@/lib/kite";
 import { findDuplicateOpenGroups, mergeOpenTradeGroup, computeMarginForQuantity } from "@/lib/paperTrading";
 import { getPaperTrades, savePaperTrades } from "@/lib/kv";
 
@@ -37,6 +37,6 @@ export async function POST() {
     return NextResponse.json({ merged: groups.length, trades: result });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to merge duplicate positions.";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: message }, { status: err instanceof KiteAuthError ? 401 : 500 });
   }
 }

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isConnected } from "@/lib/session";
-import { requireAccessToken } from "@/lib/kite";
+import { requireAccessToken, KiteAuthError } from "@/lib/kite";
 import { batchQuote } from "@/lib/quoteBatch";
 import { buildTradePlan, findOpenTrade, tradeQuoteKeys, markToMarket } from "@/lib/paperTrading";
 import { getPaperTrades } from "@/lib/kv";
@@ -70,6 +70,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ isIncrease: false, ...plan });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to build a trade plan.";
-    return NextResponse.json({ error: message }, { status: 400 });
+    return NextResponse.json({ error: message }, { status: err instanceof KiteAuthError ? 401 : 400 });
   }
 }

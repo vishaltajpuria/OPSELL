@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 
 type PaperTradeLeg = { tradingsymbol: string; strike: number; optionType: "CE" | "PE" };
 
@@ -95,6 +96,12 @@ export default function PaperTradePositions() {
   const [refreshedAt, setRefreshedAt] = useState<string | null>(null);
   const [adjustment, setAdjustment] = useState<Adjustment | null>(null);
   const [merging, setMerging] = useState(false);
+  // Set whenever any call comes back 401 — Zerodha invalidates every
+  // access token once a day regardless of when it was issued, so this is
+  // expected daily behavior (typically first noticed at market open), not
+  // an error to just leave as inline red text: it calls for a specific
+  // action (reconnect from Settings), so it gets its own banner.
+  const [authExpired, setAuthExpired] = useState(false);
 
   const load = useCallback(async () => {
     setStatus("loading");
@@ -102,8 +109,12 @@ export default function PaperTradePositions() {
     try {
       const res = await fetch("/api/papertrade");
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Failed to load.");
+      if (!res.ok) {
+        setAuthExpired(res.status === 401);
+        throw new Error(data.error ?? "Failed to load.");
+      }
       setTrades(data.trades);
+      setAuthExpired(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -121,8 +132,12 @@ export default function PaperTradePositions() {
     try {
       const res = await fetch("/api/papertrade/merge", { method: "POST" });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Failed to merge duplicate positions.");
+      if (!res.ok) {
+        setAuthExpired(res.status === 401);
+        throw new Error(data.error ?? "Failed to merge duplicate positions.");
+      }
       setTrades(data.trades);
+      setAuthExpired(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -135,7 +150,11 @@ export default function PaperTradePositions() {
     try {
       const res = await fetch("/api/papertrade/refresh", { method: "POST" });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Failed to refresh live prices.");
+      if (!res.ok) {
+        setAuthExpired(res.status === 401);
+        throw new Error(data.error ?? "Failed to refresh live prices.");
+      }
+      setAuthExpired(false);
       setTrades(data.trades);
       setRefreshedAt(data.refreshedAt);
       setError(
@@ -159,7 +178,11 @@ export default function PaperTradePositions() {
         body: JSON.stringify(lots ? { id, lots } : { id }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Failed to close the trade.");
+      if (!res.ok) {
+        setAuthExpired(res.status === 401);
+        throw new Error(data.error ?? "Failed to close the trade.");
+      }
+      setAuthExpired(false);
       setTrades((prev) => prev.map((t) => (t.id === id ? data.trade : t)));
       setAdjustment(null);
     } catch (err) {
@@ -189,7 +212,11 @@ export default function PaperTradePositions() {
           body: JSON.stringify({ symbol: trade.symbol, mode: trade.mode, lots }),
         });
         const data = await res.json();
-        if (!res.ok) throw new Error(data.error ?? "Failed to increase the position.");
+        if (!res.ok) {
+          setAuthExpired(res.status === 401);
+          throw new Error(data.error ?? "Failed to increase the position.");
+        }
+        setAuthExpired(false);
         setTrades((prev) => prev.map((t) => (t.id === trade.id ? data.trade : t)));
       } else {
         const res = await fetch("/api/papertrade/close", {
@@ -198,7 +225,11 @@ export default function PaperTradePositions() {
           body: JSON.stringify({ id: trade.id, lots }),
         });
         const data = await res.json();
-        if (!res.ok) throw new Error(data.error ?? "Failed to reduce the position.");
+        if (!res.ok) {
+          setAuthExpired(res.status === 401);
+          throw new Error(data.error ?? "Failed to reduce the position.");
+        }
+        setAuthExpired(false);
         setTrades((prev) => prev.map((t) => (t.id === trade.id ? data.trade : t)));
       }
       setAdjustment(null);
@@ -234,6 +265,20 @@ export default function PaperTradePositions() {
 
   return (
     <div>
+      {authExpired && (
+        <div className="mb-3 flex items-center justify-between gap-3 rounded-xl border border-danger/40 bg-danger/10 p-3">
+          <p className="text-xs text-danger">
+            Your Zerodha session has expired for the day — reconnect to keep going.
+          </p>
+          <Link
+            href="/settings"
+            className="shrink-0 rounded-lg bg-danger px-3 py-1.5 text-xs font-medium text-white"
+          >
+            Reconnect
+          </Link>
+        </div>
+      )}
+
       {duplicateKeys.size > 0 && (
         <div className="mb-3 flex items-center justify-between gap-3 rounded-xl border border-accent/40 bg-accent/5 p-3">
           <p className="text-xs">
@@ -279,7 +324,7 @@ export default function PaperTradePositions() {
           Prices as of {new Date(refreshedAt).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })} IST
         </p>
       )}
-      {error && <p className="mt-2 text-xs text-danger">{error}</p>}
+      {error && !authExpired && <p className="mt-2 text-xs text-danger">{error}</p>}
 
       <h2 className="mt-4 text-xs font-semibold uppercase tracking-wide text-muted">Open ({openTrades.length})</h2>
       <ul className="mt-2 divide-y divide-border overflow-hidden rounded-xl border border-border">

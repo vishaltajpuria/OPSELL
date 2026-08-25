@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 
 type StoredSignal = {
   symbol: string;
@@ -291,7 +292,22 @@ export default function PaperTradeCandidates({
             {preview.plan?.isIncrease && " · adding to existing position"}
           </p>
           {preview.status === "loading" && <p className="mt-2 text-xs text-muted">Fetching live option chain…</p>}
-          {preview.status === "error" && <p className="mt-2 text-xs text-danger">{preview.error}</p>}
+          {preview.status === "error" && (
+            <div className="mt-2 text-xs text-danger">
+              <p>{preview.error}</p>
+              {/* Zerodha invalidates the day's access token platform-wide every
+                  morning — the server's error message says so in exactly these
+                  words when that's what happened (see KiteAuthError in
+                  lib/kite.ts), so matching it here (rather than plumbing a
+                  separate flag through every fetch call in this component) is
+                  enough to offer a one-tap fix instead of a dead-end message. */}
+              {preview.error?.includes("reconnect from Settings") && (
+                <Link href="/settings" className="mt-1 inline-block rounded-lg bg-danger px-3 py-1.5 text-xs font-medium text-white">
+                  Reconnect
+                </Link>
+              )}
+            </div>
+          )}
           {preview.status === "confirmed" && (
             <p className="mt-2 text-xs text-accent">
               {preview.plan?.isIncrease ? "Position increased" : "Trade opened"} — check the Positions tab.

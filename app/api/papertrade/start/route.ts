@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { isConnected } from "@/lib/session";
-import { requireAccessToken } from "@/lib/kite";
+import { requireAccessToken, KiteAuthError } from "@/lib/kite";
 import { buildTradePlan, computeCapitalRequired, findOpenTrade } from "@/lib/paperTrading";
 import { getPaperTrades, savePaperTrades, type PaperTrade } from "@/lib/kv";
 
@@ -85,6 +85,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ trade });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to start the trade.";
-    return NextResponse.json({ error: message }, { status: 400 });
+    return NextResponse.json({ error: message }, { status: err instanceof KiteAuthError ? 401 : 400 });
   }
 }

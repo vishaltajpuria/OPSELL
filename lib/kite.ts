@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { getAccessToken } from "@/lib/session";
+import { getAccessToken, clearAccessToken } from "@/lib/session";
 
 const BASE_URL = "https://api.kite.trade";
 const LOGIN_URL = "https://kite.zerodha.com/connect/login";
@@ -55,6 +55,36 @@ export function requireAccessToken(): string {
   return token;
 }
 
+/**
+ * Zerodha invalidates every access token platform-wide once a day, so a
+ * "TokenException" (Kite's own error_type for this) is expected daily
+ * behavior, not a bug — but Kite's raw message ("Incorrect `api_key` or
+ * `access_token`.") reads like a config problem, not "please log in
+ * again." Thrown instead of a plain Error so it carries an actionable
+ * message; callers that want to react specifically (e.g. redirect to
+ * Settings) can check `instanceof KiteAuthError`.
+ */
+export class KiteAuthError extends Error {}
+
+const REAUTH_MESSAGE = "Your Zerodha session has expired for the day — reconnect from Settings to continue.";
+
+async function throwKiteError(res: Response): Promise<never> {
+  let message = `Kite API error (${res.status})`;
+  let errorType: string | undefined;
+  try {
+    const j = await res.json();
+    message = j.message ?? message;
+    errorType = j.error_type;
+  } catch {
+    // response wasn't JSON (e.g. the CSV instrument dump); keep the generic message
+  }
+  if (errorType === "TokenException") {
+    clearAccessToken();
+    throw new KiteAuthError(REAUTH_MESSAGE);
+  }
+  throw new Error(message);
+}
+
 async function kiteGet(path: string, accessToken: string, searchParams?: URLSearchParams) {
   const url = new URL(BASE_URL + path);
   if (searchParams) url.search = searchParams.toString();
@@ -65,16 +95,7 @@ async function kiteGet(path: string, accessToken: string, searchParams?: URLSear
     },
     cache: "no-store",
   });
-  if (!res.ok) {
-    let message = `Kite API error (${res.status})`;
-    try {
-      const j = await res.json();
-      message = j.message ?? message;
-    } catch {
-      // response wasn't JSON (e.g. the CSV instrument dump); keep the generic message
-    }
-    throw new Error(message);
-  }
+  if (!res.ok) await throwKiteError(res);
   return res;
 }
 
@@ -142,16 +163,7 @@ async function kitePostJson(path: string, accessToken: string, body: unknown) {
     body: JSON.stringify(body),
     cache: "no-store",
   });
-  if (!res.ok) {
-    let message = `Kite API error (${res.status})`;
-    try {
-      const j = await res.json();
-      message = j.message ?? message;
-    } catch {
-      // response wasn't JSON; keep the generic message
-    }
-    throw new Error(message);
-  }
+  if (!res.ok) await throwKiteError(res);
   return res;
 }
 
