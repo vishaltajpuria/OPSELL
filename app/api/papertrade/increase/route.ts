@@ -2,7 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { isConnected } from "@/lib/session";
 import { requireAccessToken, KiteAuthError } from "@/lib/kite";
 import { batchQuote } from "@/lib/quoteBatch";
-import { findOpenTrade, tradeQuoteKeys, markToMarket, weightedAveragePremium, computeMarginForQuantity } from "@/lib/paperTrading";
+import {
+  findOpenTrade,
+  tradeQuoteKeys,
+  markToMarket,
+  weightedAveragePremium,
+  computeMarginForQuantity,
+  computeTodayPnl,
+} from "@/lib/paperTrading";
 import { getPaperTrades, savePaperTrades } from "@/lib/kv";
 
 // Adds lots to an already-open position, at its EXISTING strike(s) — never
@@ -42,6 +49,7 @@ export async function POST(request: NextRequest) {
     trade.capitalRequired = await computeMarginForQuantity(trade, newLots, accessToken);
     trade.lastMarkPremium = mark.premium;
     trade.lastMarkAt = new Date().toISOString();
+    trade.todayPnl = computeTodayPnl(trade, quotes, new Date());
 
     await savePaperTrades(trades);
     return NextResponse.json({ trade });

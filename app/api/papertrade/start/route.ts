@@ -77,6 +77,7 @@ export async function POST(request: NextRequest) {
       closedLots: [],
       lastMarkPremium: plan.entryPremium,
       lastMarkAt: now,
+      todayPnl: 0, // just opened at entryPremium = current — the day's move so far is exactly zero
     };
 
     trades.push(trade);

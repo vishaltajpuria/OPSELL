@@ -33,6 +33,7 @@ type PaperTrade = {
   closedLots: ClosedLot[];
   lastMarkPremium: number | null;
   lastMarkAt: string | null;
+  todayPnl: number | null;
 };
 
 function fmt(n: number, digits = 2) {
@@ -250,6 +251,20 @@ export default function PaperTradePositions() {
   const totalCapital = knownCapital.reduce((sum, t) => sum + (t.capitalRequired as number), 0);
   const unknownCapitalCount = openTrades.length - knownCapital.length;
 
+  // Today's P&L combines two kinds of events: the day's mark-to-market move
+  // on every still-open position (todayPnl, refreshed by the Live button —
+  // see computeTodayPnl in lib/paperTrading.ts) plus the full realized P&L
+  // of anything actually closed (fully or partially) today, which needs no
+  // live refresh since it's already fixed the moment it closed.
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const knownTodayOpen = openTrades.filter((t) => typeof t.todayPnl === "number");
+  const unknownTodayCount = openTrades.length - knownTodayOpen.length;
+  const todayClosedEvents = closedEvents.filter((e) => e.lot.closedAt.slice(0, 10) === todayIso);
+  const todayPnl =
+    knownTodayOpen.reduce((sum, t) => sum + (t.todayPnl as number), 0) +
+    todayClosedEvents.reduce((sum, e) => sum + e.lot.pnl, 0);
+  const hasTodayActivity = knownTodayOpen.length > 0 || todayClosedEvents.length > 0;
+
   // Same-contract duplicates — e.g. the same symbol/mode/strike opened
   // twice — surfaced here purely to decide whether to show the merge
   // banner; the actual merge math runs server-side (mergeOpenTradeGroup in
@@ -295,8 +310,23 @@ export default function PaperTradePositions() {
         </div>
       )}
 
-      {openTrades.length > 0 && (
+      {(openTrades.length > 0 || todayClosedEvents.length > 0) && (
         <div className="rounded-xl border border-border bg-surface p-4">
+          <p className="text-xs text-muted">Today&apos;s P&amp;L</p>
+          <p className={`mt-1 text-2xl font-semibold ${todayPnl >= 0 ? "text-accent" : "text-danger"}`}>
+            {hasTodayActivity ? `₹${signedFmt(todayPnl, 0)}` : "—"}
+          </p>
+          {unknownTodayCount > 0 && (
+            <p className="mt-1 text-[10px] text-danger">
+              {unknownTodayCount} open position{unknownTodayCount === 1 ? "" : "s"} not refreshed yet today — hit{" "}
+              <span className="font-medium">Live</span> to include {unknownTodayCount === 1 ? "it" : "them"}.
+            </p>
+          )}
+        </div>
+      )}
+
+      {openTrades.length > 0 && (
+        <div className="mt-3 rounded-xl border border-border bg-surface p-4">
           <p className="text-xs text-muted">Total capital deployed</p>
           <p className="mt-1 text-2xl font-semibold">₹{fmt(totalCapital, 0)}</p>
           {unknownCapitalCount > 0 && (
@@ -357,6 +387,16 @@ export default function PaperTradePositions() {
               </div>
               <div className="mt-0.5 text-[11px] text-muted">
                 Capital {typeof t.capitalRequired === "number" ? `₹${fmt(t.capitalRequired, 0)}` : "unknown (margin lookup failed)"}
+              </div>
+              <div className="mt-0.5 text-[11px]">
+                <span className="text-muted">Today </span>
+                {typeof t.todayPnl === "number" ? (
+                  <span className={`font-medium ${t.todayPnl >= 0 ? "text-accent" : "text-danger"}`}>
+                    ₹{signedFmt(t.todayPnl, 0)}
+                  </span>
+                ) : (
+                  <span className="text-muted">— hit Live to refresh</span>
+                )}
               </div>
               {maxPL && (
                 <div className="mt-0.5 text-[11px]">

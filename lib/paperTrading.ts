@@ -313,6 +313,40 @@ export function markToMarket(
   return { premium, underlyingPrice: spotQ.last_price };
 }
 
+/**
+ * Today's ₹ P&L for one open trade — the day's move, not the position's
+ * whole-life P&L (which is entryPremium vs. current, already shown
+ * separately). If the position was opened today, that IS its whole current
+ * unrealized P&L — there's no "yesterday" to measure from. Otherwise it's
+ * measured from each leg's previous close (Kite's own ohlc.close on every
+ * quote — no extra API call) to its current mid, the standard "day change"
+ * definition a broker shows. A position topped up today after being opened
+ * on an earlier day is measured uniformly from the earlier reference point
+ * across its whole (weighted-average) size — a documented approximation,
+ * since per-lot entry dates aren't tracked separately from the single
+ * weighted-average entryPremium (see weightedAveragePremium).
+ */
+export function computeTodayPnl(
+  trade: Pick<PaperTrade, "mode" | "shortLeg" | "longLeg" | "entryAt" | "entryPremium" | "lots" | "lotSize">,
+  quotes: Record<string, Quote>,
+  today: Date
+): number | null {
+  const shortQ = quotes[`NFO:${trade.shortLeg.tradingsymbol}`];
+  if (!shortQ) return null;
+  const longQ = trade.longLeg ? quotes[`NFO:${trade.longLeg.tradingsymbol}`] : null;
+  if (trade.longLeg && !longQ) return null;
+
+  const currentPremium = longQ ? quoteMidPrice(shortQ) - quoteMidPrice(longQ) : quoteMidPrice(shortQ);
+  const openedToday = trade.entryAt.slice(0, 10) === today.toISOString().slice(0, 10);
+  const referencePremium = openedToday
+    ? trade.entryPremium
+    : longQ
+      ? shortQ.ohlc.close - longQ.ohlc.close
+      : shortQ.ohlc.close;
+
+  return computePnlPerShare(trade.mode, referencePremium, currentPremium) * trade.lots * trade.lotSize;
+}
+
 function spreadMarginOrders(shortTradingsymbol: string, longTradingsymbol: string, quantity: number): MarginOrder[] {
   return [
     {
@@ -474,5 +508,9 @@ export function mergeOpenTradeGroup(group: PaperTrade[]): PaperTrade {
     lastMarkPremium: latestMarked?.lastMarkPremium ?? null,
     lastMarkAt: latestMarked?.lastMarkAt ?? null,
     capitalRequired: null,
+    // Each duplicate's todayPnl was sized for its OWN lots, not the merged
+    // total — carrying one over would misstate it. Corrected on the next
+    // Live press, same as capitalRequired above.
+    todayPnl: null,
   };
 }

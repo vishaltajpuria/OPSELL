@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { isConnected } from "@/lib/session";
 import { requireAccessToken, KiteAuthError } from "@/lib/kite";
 import { batchQuote } from "@/lib/quoteBatch";
-import { tradeQuoteKeys, markToMarket, backfillCapitalRequired } from "@/lib/paperTrading";
+import { tradeQuoteKeys, markToMarket, backfillCapitalRequired, computeTodayPnl } from "@/lib/paperTrading";
 import { getPaperTrades, savePaperTrades } from "@/lib/kv";
 
 export const dynamic = "force-dynamic";
@@ -29,7 +29,8 @@ export async function POST() {
     const keys = Array.from(new Set(openTrades.flatMap((t) => tradeQuoteKeys(t))));
     const quotes = await batchQuote(keys, accessToken);
 
-    const now = new Date().toISOString();
+    const now = new Date();
+    const nowIso = now.toISOString();
     const stale: string[] = [];
     for (const trade of openTrades) {
       const mark = markToMarket(trade, quotes);
@@ -38,7 +39,8 @@ export async function POST() {
         continue;
       }
       trade.lastMarkPremium = mark.premium;
-      trade.lastMarkAt = now;
+      trade.lastMarkAt = nowIso;
+      trade.todayPnl = computeTodayPnl(trade, quotes, now);
     }
 
     await Promise.all(
@@ -50,7 +52,7 @@ export async function POST() {
     );
 
     await savePaperTrades(trades);
-    return NextResponse.json({ trades, refreshedAt: now, stale });
+    return NextResponse.json({ trades, refreshedAt: nowIso, stale });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to refresh live prices.";
     return NextResponse.json({ error: message }, { status: err instanceof KiteAuthError ? 401 : 500 });

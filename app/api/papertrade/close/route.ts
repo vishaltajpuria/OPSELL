@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { isConnected } from "@/lib/session";
 import { requireAccessToken, KiteAuthError } from "@/lib/kite";
 import { batchQuote } from "@/lib/quoteBatch";
-import { tradeQuoteKeys, markToMarket, computePartialClose } from "@/lib/paperTrading";
+import { tradeQuoteKeys, markToMarket, computePartialClose, computeTodayPnl } from "@/lib/paperTrading";
 import { getPaperTrades, savePaperTrades, type ClosedLot } from "@/lib/kv";
 
 // Closes a position, in full (omit lots) or in part (pass lots < what's
@@ -63,6 +63,7 @@ export async function POST(request: NextRequest) {
     trade.status = result.remainingLots > 0 ? "open" : "closed";
     trade.lastMarkPremium = mark.premium;
     trade.lastMarkAt = now;
+    trade.todayPnl = result.remainingLots > 0 ? computeTodayPnl(trade, quotes, new Date(now)) : null;
 
     await savePaperTrades(trades);
     return NextResponse.json({ trade });

@@ -145,6 +145,12 @@ export type PaperTrade = {
   closedLots: ClosedLot[]; // history of every partial/full close, oldest first — empty if never closed at all
   lastMarkPremium: number | null; // most recent Live-button mark-to-market, per share/unit
   lastMarkAt: string | null;
+  // Today's ₹ move as of the last Live press — see computeTodayPnl in
+  // lib/paperTrading.ts — distinct from the position's whole-life P&L
+  // (entryPremium vs. lastMarkPremium). Null until the first Live press
+  // after this field existed, or if that day-change couldn't be computed
+  // (e.g. a leg's quote was momentarily unavailable).
+  todayPnl: number | null;
 };
 
 const PAPER_TRADES_KEY = "papertrades:all";
@@ -153,8 +159,9 @@ const PAPER_TRADES_KEY = "papertrades:all";
 // fields from schema versions before closedLots existed, so getPaperTrades
 // can migrate them on read rather than the app crashing or silently
 // dropping history.
-type StoredPaperTradeShape = Omit<PaperTrade, "closedLots" | "capitalRequired"> & {
+type StoredPaperTradeShape = Omit<PaperTrade, "closedLots" | "capitalRequired" | "todayPnl"> & {
   capitalRequired?: number | null;
+  todayPnl?: number | null;
   closedLots?: ClosedLot[];
   // Pre-partial-close schema: a single top-level exit instead of an array.
   exitAt?: string | null;
@@ -171,7 +178,14 @@ export async function getPaperTrades(): Promise<PaperTrade[]> {
     const capitalRequired = t.capitalRequired ?? null;
 
     if (Array.isArray(t.closedLots)) {
-      return { ...t, capitalRequired, closedLots: t.closedLots, lastMarkPremium: t.lastMarkPremium ?? null, lastMarkAt: t.lastMarkAt ?? null };
+      return {
+        ...t,
+        capitalRequired,
+        closedLots: t.closedLots,
+        lastMarkPremium: t.lastMarkPremium ?? null,
+        lastMarkAt: t.lastMarkAt ?? null,
+        todayPnl: t.todayPnl ?? null,
+      };
     }
 
     // Pre-partial-close record: migrate a legacy single top-level exit
@@ -215,6 +229,7 @@ export async function getPaperTrades(): Promise<PaperTrade[]> {
       closedLots,
       lastMarkPremium: t.lastMarkPremium ?? null,
       lastMarkAt: t.lastMarkAt ?? null,
+      todayPnl: t.todayPnl ?? null,
     };
   });
 }
