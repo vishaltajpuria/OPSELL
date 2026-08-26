@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import ManualTradePanel from "@/components/ManualTradePanel";
 
 type StoredSignal = {
   symbol: string;
@@ -285,6 +286,8 @@ export default function PaperTradeCandidates({
           ? `Candidates from the ${new Date(runAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })} IST run, sorted by biggest entry→target move first.`
           : "No candidates yet — run the Strategy scan first."}
       </p>
+
+      <ManualTradePanel onTrade={openPreview} />
 
       {preview && (
         <div className="mt-3 rounded-xl border border-accent/50 bg-accent/5 p-3">
