@@ -6,6 +6,7 @@ import { getEquityToken, getIndexToken } from "@/lib/nseInstruments";
 import { INDEX_DEFS } from "@/lib/indices";
 import { resampleTo4H } from "@/lib/indicators";
 import { detectSignals } from "@/lib/strategy";
+import { findNextGap } from "@/lib/gaps";
 import { batchQuote } from "@/lib/quoteBatch";
 import { patchTodayCandle } from "@/lib/candleFreshness";
 import { runRateLimited } from "@/lib/rateLimit";
@@ -94,8 +95,16 @@ export async function runDailyTimeframeStrategy(
       if (!token) return;
       const rawCandles = await getHistoricalCandles(token, "day", fromDaily, to, accessToken);
       const candles = patchTodayCandle(rawCandles, liveQuotes[`NSE:${symbol}`]);
-      for (const signal of detectSignals(candles)) {
-        signals.push({ symbol, timeframe: "1D", ...signal });
+      const stockSignals = detectSignals(candles);
+      if (stockSignals.length > 0) {
+        // Real (non-Heikin-Ashi) price gaps — informational only, doesn't
+        // affect which stocks made the cut above. Computed once per stock,
+        // not per signal, since every signal for a stock shares the same
+        // entryPrice/candle history.
+        const nextGap = findNextGap(candles, stockSignals[0].entryPrice);
+        for (const signal of stockSignals) {
+          signals.push({ symbol, timeframe: "1D", ...signal, nextGap });
+        }
       }
     } catch (err) {
       errors.push(`${symbol}: ${err instanceof Error ? err.message : "failed"}`);
@@ -118,8 +127,12 @@ export async function runDailyTimeframeStrategy(
       try {
         const rawDaily = await getHistoricalCandles(token, "day", fromDaily, to, accessToken);
         const daily = patchTodayCandle(rawDaily, indexLiveQuotes[`${def.exchange}:${def.tradingsymbol}`]);
-        for (const signal of detectSignals(daily)) {
-          signals.push({ symbol: def.key, timeframe: "1D", ...signal });
+        const indexSignals = detectSignals(daily);
+        if (indexSignals.length > 0) {
+          const nextGap = findNextGap(daily, indexSignals[0].entryPrice);
+          for (const signal of indexSignals) {
+            signals.push({ symbol: def.key, timeframe: "1D", ...signal, nextGap });
+          }
         }
       } catch (err) {
         errors.push(`${def.key} (1D): ${err instanceof Error ? err.message : "failed"}`);
@@ -155,7 +168,10 @@ export async function run4HTimeframeStrategy(accessToken: string, batchId: Batch
       const hourly = await getHistoricalCandles(token, "60minute", fromHourly, to, accessToken);
       const fourHour = resampleTo4H(hourly);
       for (const signal of detectSignals(fourHour, FOUR_HOUR_MAX_LOOKBACK_BARS)) {
-        signals.push({ symbol, timeframe: "4H", ...signal });
+        // No raw daily candles fetched during this pass to compute a real
+        // price gap from (see the 1D pass above) — not worth an extra
+        // fetch just for this, since the Trade tab only shows 1D signals.
+        signals.push({ symbol, timeframe: "4H", ...signal, nextGap: null });
       }
     } catch (err) {
       errors.push(`${symbol}: ${err instanceof Error ? err.message : "failed"}`);
@@ -173,7 +189,7 @@ export async function run4HTimeframeStrategy(accessToken: string, batchId: Batch
         const hourly = await getHistoricalCandles(token, "60minute", fromHourly, to, accessToken);
         const fourHour = resampleTo4H(hourly);
         for (const signal of detectSignals(fourHour, FOUR_HOUR_MAX_LOOKBACK_BARS)) {
-          signals.push({ symbol: def.key, timeframe: "4H", ...signal });
+          signals.push({ symbol: def.key, timeframe: "4H", ...signal, nextGap: null });
         }
       } catch (err) {
         errors.push(`${def.key} (4H): ${err instanceof Error ? err.message : "failed"}`);

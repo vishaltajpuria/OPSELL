@@ -1,5 +1,6 @@
 import { Redis } from "@upstash/redis";
 import type { SmaPoint } from "@/lib/strategy";
+import type { GapInfo } from "@/lib/gaps";
 
 let client: Redis | null = null;
 
@@ -44,6 +45,12 @@ export type StoredSignal = {
   supertrendValue: number;
   triggerSma: SmaPoint;
   targetSma: SmaPoint;
+  // Nearest still-unfilled real (non-Heikin-Ashi) price gap within 20% of
+  // entryPrice — see findNextGap in lib/gaps.ts. Purely informational: it
+  // plays no part in which stocks make the strategy's own signal list, only
+  // computed for 1D (null for 4H, which has no raw daily candles fetched
+  // during that pass to compute it from).
+  nextGap: GapInfo | null;
 };
 
 export type LatestSignals = { date: string; runAt: string; signals: StoredSignal[] };

@@ -12,6 +12,7 @@ type StoredSignal = {
   supertrendValue: number;
   triggerSma: { period: number; value: number };
   targetSma: { period: number; value: number };
+  nextGap: { price: number; percent: number } | null;
 };
 
 type PaperTradeLeg = { tradingsymbol: string; strike: number; optionType: "CE" | "PE" };
@@ -444,6 +445,12 @@ export default function PaperTradeCandidates({
             <div className="mt-1 text-[11px] text-muted">
               Entry {fmt(s.entryPrice)} → Target {fmt(s.targetSma.value)} ({targetGapPercent(s).toFixed(1)}%)
             </div>
+            {s.nextGap && (
+              <div className="mt-0.5 text-[11px] text-muted">
+                Next gap {fmt(s.nextGap.price)} ({s.nextGap.percent >= 0 ? "+" : ""}
+                {s.nextGap.percent.toFixed(1)}%)
+              </div>
+            )}
             <div className="mt-2 flex gap-2">
               <button
                 onClick={() => openPreview(s.symbol, s.direction, "buy")}
