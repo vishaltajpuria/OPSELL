@@ -158,6 +158,16 @@ export type PaperTrade = {
   // after this field existed, or if that day-change couldn't be computed
   // (e.g. a leg's quote was momentarily unavailable).
   todayPnl: number | null;
+  // The underlying stock/index's own current price and day change, as of
+  // the last Live press (or trade entry, for currentUnderlyingPrice only —
+  // see markToMarket in lib/paperTrading.ts). Distinct from todayPnl above:
+  // this is "how is the stock doing today," independent of which way the
+  // option position is betting. underlyingChange* are null until the first
+  // Live press, since computing a day change needs a live quote's previous
+  // close, not just the entry-time spot price.
+  currentUnderlyingPrice: number | null;
+  underlyingChangeValue: number | null;
+  underlyingChangePercent: number | null;
 };
 
 const PAPER_TRADES_KEY = "papertrades:all";
@@ -166,9 +176,15 @@ const PAPER_TRADES_KEY = "papertrades:all";
 // fields from schema versions before closedLots existed, so getPaperTrades
 // can migrate them on read rather than the app crashing or silently
 // dropping history.
-type StoredPaperTradeShape = Omit<PaperTrade, "closedLots" | "capitalRequired" | "todayPnl"> & {
+type StoredPaperTradeShape = Omit<
+  PaperTrade,
+  "closedLots" | "capitalRequired" | "todayPnl" | "currentUnderlyingPrice" | "underlyingChangeValue" | "underlyingChangePercent"
+> & {
   capitalRequired?: number | null;
   todayPnl?: number | null;
+  currentUnderlyingPrice?: number | null;
+  underlyingChangeValue?: number | null;
+  underlyingChangePercent?: number | null;
   closedLots?: ClosedLot[];
   // Pre-partial-close schema: a single top-level exit instead of an array.
   exitAt?: string | null;
@@ -192,6 +208,9 @@ export async function getPaperTrades(): Promise<PaperTrade[]> {
         lastMarkPremium: t.lastMarkPremium ?? null,
         lastMarkAt: t.lastMarkAt ?? null,
         todayPnl: t.todayPnl ?? null,
+        currentUnderlyingPrice: t.currentUnderlyingPrice ?? null,
+        underlyingChangeValue: t.underlyingChangeValue ?? null,
+        underlyingChangePercent: t.underlyingChangePercent ?? null,
       };
     }
 
@@ -237,6 +256,9 @@ export async function getPaperTrades(): Promise<PaperTrade[]> {
       lastMarkPremium: t.lastMarkPremium ?? null,
       lastMarkAt: t.lastMarkAt ?? null,
       todayPnl: t.todayPnl ?? null,
+      currentUnderlyingPrice: t.currentUnderlyingPrice ?? null,
+      underlyingChangeValue: t.underlyingChangeValue ?? null,
+      underlyingChangePercent: t.underlyingChangePercent ?? null,
     };
   });
 }

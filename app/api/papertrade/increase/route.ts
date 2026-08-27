@@ -50,6 +50,9 @@ export async function POST(request: NextRequest) {
     trade.lastMarkPremium = mark.premium;
     trade.lastMarkAt = new Date().toISOString();
     trade.todayPnl = computeTodayPnl(trade, quotes, new Date());
+    trade.currentUnderlyingPrice = mark.underlyingPrice;
+    trade.underlyingChangeValue = mark.underlyingChangeValue;
+    trade.underlyingChangePercent = mark.underlyingChangePercent;
 
     await savePaperTrades(trades);
     return NextResponse.json({ trade });

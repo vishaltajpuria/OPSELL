@@ -41,6 +41,9 @@ export async function POST() {
       trade.lastMarkPremium = mark.premium;
       trade.lastMarkAt = nowIso;
       trade.todayPnl = computeTodayPnl(trade, quotes, now);
+      trade.currentUnderlyingPrice = mark.underlyingPrice;
+      trade.underlyingChangeValue = mark.underlyingChangeValue;
+      trade.underlyingChangePercent = mark.underlyingChangePercent;
     }
 
     await Promise.all(

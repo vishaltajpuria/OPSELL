@@ -34,6 +34,9 @@ type PaperTrade = {
   lastMarkPremium: number | null;
   lastMarkAt: string | null;
   todayPnl: number | null;
+  currentUnderlyingPrice: number | null;
+  underlyingChangeValue: number | null;
+  underlyingChangePercent: number | null;
 };
 
 function fmt(n: number, digits = 2) {
@@ -379,6 +382,21 @@ export default function PaperTradePositions() {
                   </span>
                 </span>
                 <span className={`text-sm font-semibold ${total >= 0 ? "text-accent" : "text-danger"}`}>{signedFmt(total, 0)}</span>
+              </div>
+              <div className="mt-0.5 text-[11px]">
+                {typeof t.currentUnderlyingPrice === "number" ? (
+                  <>
+                    <span className="font-medium">₹{fmt(t.currentUnderlyingPrice)}</span>
+                    {typeof t.underlyingChangeValue === "number" && typeof t.underlyingChangePercent === "number" && (
+                      <span className={`ml-1.5 font-medium ${t.underlyingChangeValue >= 0 ? "text-accent" : "text-danger"}`}>
+                        {t.underlyingChangeValue >= 0 ? "▲" : "▼"} {signedFmt(t.underlyingChangeValue)} (
+                        {signedFmt(t.underlyingChangePercent, 1)}%)
+                      </span>
+                    )}
+                  </>
+                ) : (
+                  <span className="text-muted">Underlying price — hit Live to refresh</span>
+                )}
               </div>
               <div className="mt-1 text-[11px] text-muted">
                 {t.mode === "sell" && t.longLeg && `Spread w/ ${legLabel(t.longLeg)} · `}

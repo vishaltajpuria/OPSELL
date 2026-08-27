@@ -299,7 +299,17 @@ export function tradeQuoteKeys(trade: Pick<PaperTrade, "symbol" | "shortLeg" | "
 export function markToMarket(
   trade: Pick<PaperTrade, "symbol" | "shortLeg" | "longLeg">,
   quotes: Record<string, Quote>
-): { premium: number; underlyingPrice: number } | null {
+): {
+  premium: number;
+  underlyingPrice: number;
+  // The UNDERLYING stock/index's own move today — from its previous close
+  // (Kite's ohlc.close, already on the same spot quote) to its current
+  // price. Distinct from todayPnl below, which is the option position's
+  // day P&L; this is just "how is the stock doing today," independent of
+  // which way the trade is betting.
+  underlyingChangeValue: number;
+  underlyingChangePercent: number;
+} | null {
   const shortQ = quotes[`NFO:${trade.shortLeg.tradingsymbol}`];
   const spotQ = quotes[spotQuoteKey(trade.symbol)];
   if (!shortQ || !spotQ) return null;
@@ -310,7 +320,12 @@ export function markToMarket(
     if (!longQ) return null;
     premium = quoteMidPrice(shortQ) - quoteMidPrice(longQ);
   }
-  return { premium, underlyingPrice: spotQ.last_price };
+
+  const prevClose = spotQ.ohlc.close;
+  const underlyingChangeValue = spotQ.last_price - prevClose;
+  const underlyingChangePercent = prevClose !== 0 ? (underlyingChangeValue / prevClose) * 100 : 0;
+
+  return { premium, underlyingPrice: spotQ.last_price, underlyingChangeValue, underlyingChangePercent };
 }
 
 /**

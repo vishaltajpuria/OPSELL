@@ -78,6 +78,12 @@ export async function POST(request: NextRequest) {
       lastMarkPremium: plan.entryPremium,
       lastMarkAt: now,
       todayPnl: 0, // just opened at entryPremium = current — the day's move so far is exactly zero
+      currentUnderlyingPrice: plan.underlyingPrice,
+      // The day-change needs a live quote's previous close, which
+      // buildTradePlan doesn't fetch (it only needs the current spot to
+      // pick strikes) — filled in by the first Live press instead.
+      underlyingChangeValue: null,
+      underlyingChangePercent: null,
     };
 
     trades.push(trade);
