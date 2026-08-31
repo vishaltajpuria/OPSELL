@@ -35,6 +35,10 @@ export async function POST(request: NextRequest) {
     typeof body?.shortStrike === "number"
       ? { short: body.shortStrike, long: typeof body?.longStrike === "number" ? body.longStrike : undefined }
       : undefined;
+  // Optional: trade the nearest weekly expiry instead of the monthly
+  // contract — buildTradePlan itself enforces this is only available for
+  // NIFTY, this route just passes the request through.
+  const expiryMode = body?.expiryMode === "weekly" ? "weekly" : "monthly";
 
   try {
     const trades = await getPaperTrades();
@@ -66,7 +70,7 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    const plan = await buildTradePlan(symbol, direction, mode, manualStrikes);
+    const plan = await buildTradePlan(symbol, direction, mode, manualStrikes, expiryMode);
     return NextResponse.json({ isIncrease: false, ...plan });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to build a trade plan.";

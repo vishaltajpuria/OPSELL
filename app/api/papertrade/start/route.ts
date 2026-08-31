@@ -43,6 +43,9 @@ export async function POST(request: NextRequest) {
     typeof body?.shortStrike === "number"
       ? { short: body.shortStrike, long: typeof body?.longStrike === "number" ? body.longStrike : undefined }
       : undefined;
+  // Same optional weekly-expiry override as /preview (NIFTY only —
+  // buildTradePlan enforces that).
+  const expiryMode = body?.expiryMode === "weekly" ? "weekly" : "monthly";
 
   try {
     const trades = await getPaperTrades();
@@ -53,7 +56,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const plan = await buildTradePlan(symbol, direction, mode, manualStrikes);
+    const plan = await buildTradePlan(symbol, direction, mode, manualStrikes, expiryMode);
     const capitalRequired = await computeCapitalRequired(plan, lots, requireAccessToken());
     const now = new Date().toISOString();
     const trade: PaperTrade = {

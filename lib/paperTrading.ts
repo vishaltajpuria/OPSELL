@@ -73,6 +73,26 @@ export function pickMonthlyExpiry(allExpiries: string[], today: Date): MonthlyEx
   };
 }
 
+/**
+ * Picks the nearest upcoming expiry (today or later) from the FULL expiry
+ * list, unfiltered by month — for a symbol with weekly expiries (NIFTY),
+ * this is simply this week's contract, whether or not it also happens to
+ * be that month's last expiry. Reuses MonthlyExpiryChoice's shape
+ * (usedNextMonth is always false here — there's no MIN_TRADING_SESSIONS
+ * rollover for weekly the way there is for monthly, since a weekly
+ * contract is short-dated by design; "not enough runway" isn't a reason to
+ * skip past the nearest one when the nearest one IS the point of trading
+ * weekly).
+ */
+export function pickWeeklyExpiry(allExpiries: string[], today: Date): MonthlyExpiryChoice | null {
+  const todayIso = today.toISOString().slice(0, 10);
+  const upcoming = allExpiries.filter((e) => e >= todayIso).sort();
+  if (upcoming.length === 0) return null;
+
+  const expiry = upcoming[0];
+  return { expiry, tradingSessionsUntil: countTradingSessionsUntil(today, new Date(expiry + "T00:00:00Z")), usedNextMonth: false };
+}
+
 function legOf(row: ChainRow, side: "call" | "put") {
   return side === "call" ? row.call : row.put;
 }
@@ -130,6 +150,7 @@ export type TradePlan = {
   direction: "short" | "long";
   mode: "buy" | "sell";
   expiry: string;
+  expiryMode: "monthly" | "weekly";
   tradingSessionsUntilExpiry: number;
   usedNextMonth: boolean;
   underlyingPrice: number;
@@ -172,15 +193,31 @@ export type TradePlan = {
  * the last trade on an illiquid or far-OTM strike can be hours old at a
  * very different underlying level, which is what produces "impossible"
  * readings like a further-OTM option pricing higher than a closer one.
+ *
+ * expiryMode "weekly" trades the nearest upcoming expiry instead of the
+ * monthly contract (see pickWeeklyExpiry) — only offered for NIFTY
+ * (WEEKLY_EXPIRY_SYMBOL below), a deliberate restriction rather than a
+ * technical one: NIFTY weeklies are consistently the most liquid weekly
+ * F&O contract on NSE, which the auto-picked strikes' bid/ask quality
+ * depends on; other symbols' weeklies (where they exist at all) aren't
+ * reliable enough to default this on for.
  */
+const WEEKLY_EXPIRY_SYMBOL = "NIFTY";
+
 export async function buildTradePlan(
   symbol: string,
   direction: "short" | "long",
   mode: "buy" | "sell",
-  manualStrikes?: { short: number; long?: number }
+  manualStrikes?: { short: number; long?: number },
+  expiryMode: "monthly" | "weekly" = "monthly"
 ): Promise<TradePlan> {
+  if (expiryMode === "weekly" && symbol !== WEEKLY_EXPIRY_SYMBOL) {
+    throw new Error(`Weekly expiries are only available for ${WEEKLY_EXPIRY_SYMBOL}.`);
+  }
+
   const expiries = await getOptionExpiries(symbol);
-  const expiryChoice = pickMonthlyExpiry(expiries, new Date());
+  const expiryChoice =
+    expiryMode === "weekly" ? pickWeeklyExpiry(expiries, new Date()) : pickMonthlyExpiry(expiries, new Date());
   if (!expiryChoice) {
     throw new Error(
       `No option expiries found for ${symbol} — it may not have listed options here (e.g. SENSEX options trade on BSE, which this app doesn't fetch instrument data for).`
@@ -212,6 +249,7 @@ export async function buildTradePlan(
       direction,
       mode,
       expiry: expiryChoice.expiry,
+      expiryMode,
       tradingSessionsUntilExpiry: expiryChoice.tradingSessionsUntil,
       usedNextMonth: expiryChoice.usedNextMonth,
       underlyingPrice: spot,
@@ -252,6 +290,7 @@ export async function buildTradePlan(
     direction,
     mode,
     expiry: expiryChoice.expiry,
+    expiryMode,
     tradingSessionsUntilExpiry: expiryChoice.tradingSessionsUntil,
     usedNextMonth: expiryChoice.usedNextMonth,
     underlyingPrice: spot,

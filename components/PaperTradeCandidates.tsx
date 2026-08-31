@@ -25,6 +25,7 @@ type FreshPlan = {
   direction: "short" | "long";
   mode: "buy" | "sell";
   expiry: string;
+  expiryMode: "monthly" | "weekly";
   tradingSessionsUntilExpiry: number;
   usedNextMonth: boolean;
   underlyingPrice: number;
@@ -241,6 +242,28 @@ export default function PaperTradeCandidates({
     }
   }
 
+  // Re-prices the plan against the nearest weekly expiry instead of the
+  // monthly one (or back to monthly) — NIFTY only, enforced server-side by
+  // buildTradePlan. Clears any manually-chosen strikes from before the
+  // switch, since a strike picked off one expiry's chain doesn't carry
+  // over to a different expiry's chain.
+  async function repriceWithExpiryMode(expiryMode: "monthly" | "weekly") {
+    if (!preview) return;
+    setPreview({ ...preview, status: "loading" });
+    try {
+      const res = await fetch("/api/papertrade/preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ symbol: preview.symbol, direction: preview.direction, mode: preview.mode, expiryMode }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to price the weekly expiry.");
+      setPreview((p) => (p ? { ...p, status: "ready", plan: data, error: null, showPicker: false, chainRows: null } : p));
+    } catch (err) {
+      setPreview((p) => (p ? { ...p, status: "error", error: err instanceof Error ? err.message : String(err) } : p));
+    }
+  }
+
   async function confirmTrade() {
     if (!preview || !preview.plan) return;
     const lots = Number(preview.lotsText);
@@ -265,6 +288,11 @@ export default function PaperTradeCandidates({
             // confirm should be what you saw.
             shortStrike: preview.plan.shortLeg.strike,
             ...(preview.plan.longLeg ? { longStrike: preview.plan.longLeg.strike } : {}),
+            // Locks in the same expiry the preview priced — /start defaults
+            // to monthly otherwise, which for a weekly-mode preview would
+            // resolve a completely different expiry (and the locked
+            // strike(s) above might not even exist on that chain).
+            expiryMode: preview.plan.expiryMode,
           };
       const res = await fetch(endpoint, {
         method: "POST",
@@ -340,9 +368,32 @@ export default function PaperTradeCandidates({
           {preview.plan && preview.status !== "confirmed" && !preview.plan.isIncrease && (
             <div className="mt-2 text-xs text-muted">
               <p>
-                Expiry {preview.plan.expiry} ({preview.plan.tradingSessionsUntilExpiry} sessions left
+                Expiry {preview.plan.expiry} ({preview.plan.expiryMode === "weekly" ? "weekly" : "monthly"} ·{" "}
+                {preview.plan.tradingSessionsUntilExpiry} sessions left
                 {preview.plan.usedNextMonth ? ", rolled to next month" : ""})
               </p>
+              {preview.symbol === "NIFTY" && (
+                <div className="mt-1 flex gap-2">
+                  <button
+                    onClick={() => repriceWithExpiryMode("monthly")}
+                    disabled={preview.plan.expiryMode === "monthly"}
+                    className={`flex-1 rounded-lg border px-2 py-1 text-[11px] font-medium ${
+                      preview.plan.expiryMode === "monthly" ? "border-accent bg-accent/10 text-accent" : "border-border bg-surface2"
+                    }`}
+                  >
+                    Monthly
+                  </button>
+                  <button
+                    onClick={() => repriceWithExpiryMode("weekly")}
+                    disabled={preview.plan.expiryMode === "weekly"}
+                    className={`flex-1 rounded-lg border px-2 py-1 text-[11px] font-medium ${
+                      preview.plan.expiryMode === "weekly" ? "border-accent bg-accent/10 text-accent" : "border-border bg-surface2"
+                    }`}
+                  >
+                    Weekly
+                  </button>
+                </div>
+              )}
               <p>Underlying {fmt(preview.plan.underlyingPrice)}</p>
               {preview.mode === "buy" ? (
                 <>
