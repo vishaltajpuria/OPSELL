@@ -147,12 +147,23 @@ export async function runDailyTimeframeStrategy(
  * (session-anchored: 9:15-13:15 IST, then 13:15-15:30 — see resampleTo4H).
  * Same crossover logic as the Daily pass, just faster.
  *
- * Stocks previously ran here too (batched the same way as the Daily pass),
- * dropped to make room for the Daily pass covering the FULL, unfiltered
- * F&O stock list instead of a pre-filtered subset — 5 indices is cheap
- * enough to run entirely within one invocation, so `batchId` only ever
- * does real work for BATCH_IDS[0] now (the caller still passes one for a
- * uniform batch-aware route/cron shape, but only that one call matters).
+ * Stocks previously ran here too (batched the same way as the Daily pass,
+ * across every BATCH_IDS entry), dropped to make room for the Daily pass
+ * covering the FULL, unfiltered F&O stock list instead of a pre-filtered
+ * subset — 5 indices is cheap enough to run entirely within one
+ * invocation, so `batchId` only ever does real work for BATCH_IDS[0] now
+ * (the caller still passes one for a uniform batch-aware route/cron
+ * shape, but only that one call matters).
+ *
+ * That batch-A-only call also actively CLEARS every other BATCH_IDS
+ * entry's 4H data for today, rather than just leaving them unwritten —
+ * lib/kv.ts's republishMerged() unconditionally merges every BATCH_IDS ×
+ * timeframe key regardless of whether anything wrote to it today, so any
+ * stock signals a batch B/C 4H run had already written for today BEFORE
+ * this change shipped (or from a stray old cron trigger still pointed at
+ * a since-removed batch) would otherwise keep showing up merged into
+ * signals:latest indefinitely, since nothing would ever overwrite that
+ * specific key again.
  */
 export async function run4HTimeframeStrategy(accessToken: string, batchId: BatchId): Promise<StrategyRunResult> {
   const now = new Date();
@@ -178,6 +189,9 @@ export async function run4HTimeframeStrategy(accessToken: string, batchId: Batch
     });
 
     await saveSignalBatch(to, "4H", batchId, signals);
+    for (const staleBatchId of BATCH_IDS) {
+      if (staleBatchId !== batchId) await saveSignalBatch(to, "4H", staleBatchId, []);
+    }
   }
 
   return { date: to, timeframe: "4H", batchId, signalCount: signals.length, errorCount: errors.length, errors };
