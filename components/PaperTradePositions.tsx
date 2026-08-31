@@ -268,6 +268,62 @@ export default function PaperTradePositions() {
     todayClosedEvents.reduce((sum, e) => sum + e.lot.pnl, 0);
   const hasTodayActivity = knownTodayOpen.length > 0 || todayClosedEvents.length > 0;
 
+  // Booked (closed) trades are grouped for display by exact contract — same
+  // symbol, mode, and leg(s) (tradingsymbol already encodes strike,
+  // optionType, and expiry) — so a position closed in several tranches, or
+  // reopened later at the identical strike, reads as one combined P&L
+  // instead of a separate line per close event. A different strike (or a
+  // different expiry at the same strike) is a genuinely different contract
+  // and stays its own group. Entry/exit premiums shown are lots-weighted
+  // averages across the group's events, since each event can carry a
+  // different entry (if the position was topped up between closes) and
+  // exit (closed at different times/prices).
+  type ClosedGroup = {
+    key: string;
+    symbol: string;
+    direction: "short" | "long";
+    mode: "buy" | "sell";
+    shortLeg: PaperTradeLeg;
+    longLeg: PaperTradeLeg | null;
+    lotSize: number;
+    totalLots: number;
+    totalPnl: number;
+    entryWeighted: number;
+    exitWeighted: number;
+    eventCount: number;
+    lastClosedAt: string;
+  };
+  const closedGroupMap = new Map<string, ClosedGroup>();
+  for (const { trade: t, lot } of closedEvents) {
+    const key = [t.symbol, t.mode, t.shortLeg.tradingsymbol, t.longLeg?.tradingsymbol ?? ""].join("|");
+    const g = closedGroupMap.get(key);
+    if (g) {
+      g.totalLots += lot.lots;
+      g.totalPnl += lot.pnl;
+      g.entryWeighted += t.entryPremium * lot.lots;
+      g.exitWeighted += lot.exitPremium * lot.lots;
+      g.eventCount += 1;
+      if (lot.closedAt > g.lastClosedAt) g.lastClosedAt = lot.closedAt;
+    } else {
+      closedGroupMap.set(key, {
+        key,
+        symbol: t.symbol,
+        direction: t.direction,
+        mode: t.mode,
+        shortLeg: t.shortLeg,
+        longLeg: t.longLeg,
+        lotSize: t.lotSize,
+        totalLots: lot.lots,
+        totalPnl: lot.pnl,
+        entryWeighted: t.entryPremium * lot.lots,
+        exitWeighted: lot.exitPremium * lot.lots,
+        eventCount: 1,
+        lastClosedAt: lot.closedAt,
+      });
+    }
+  }
+  const closedGroups = Array.from(closedGroupMap.values()).sort((a, b) => b.lastClosedAt.localeCompare(a.lastClosedAt));
+
   // Same-contract duplicates — e.g. the same symbol/mode/strike opened
   // twice — surfaced here purely to decide whether to show the merge
   // banner; the actual merge math runs server-side (mergeOpenTradeGroup in
@@ -489,27 +545,35 @@ export default function PaperTradePositions() {
         })}
       </ul>
 
-      {closedEvents.length > 0 && (
+      {closedGroups.length > 0 && (
         <>
-          <h2 className="mt-5 text-xs font-semibold uppercase tracking-wide text-muted">Closed ({closedEvents.length})</h2>
+          <h2 className="mt-5 text-xs font-semibold uppercase tracking-wide text-muted">Closed ({closedGroups.length})</h2>
           <ul className="mt-2 divide-y divide-border overflow-hidden rounded-xl border border-border">
-            {closedEvents.map(({ trade: t, lot }, i) => (
-              <li key={`${t.id}-${i}`} className="bg-surface px-4 py-3">
-                <div className="flex items-center justify-between">
-                  <span className="font-medium">
-                    {t.symbol} <DirectionBadge direction={t.direction} />{" "}
-                    <span className="text-[10px] font-normal text-muted">
-                      {t.mode === "buy" ? "Buy" : "Sell"} {legLabel(t.shortLeg)}
+            {closedGroups.map((g) => {
+              const avgEntry = g.entryWeighted / g.totalLots;
+              const avgExit = g.exitWeighted / g.totalLots;
+              return (
+                <li key={g.key} className="bg-surface px-4 py-3">
+                  <div className="flex items-center justify-between">
+                    <span className="font-medium">
+                      {g.symbol} <DirectionBadge direction={g.direction} />{" "}
+                      <span className="text-[10px] font-normal text-muted">
+                        {g.mode === "buy" ? "Buy" : "Sell"} {legLabel(g.shortLeg)}
+                      </span>
                     </span>
-                  </span>
-                  <span className={`text-sm font-semibold ${lot.pnl >= 0 ? "text-accent" : "text-danger"}`}>{signedFmt(lot.pnl, 0)}</span>
-                </div>
-                <div className="mt-1 text-[11px] text-muted">
-                  Entry {fmt(t.entryPremium)} → Exit {fmt(lot.exitPremium)} · {lot.lots} lot{lot.lots === 1 ? "" : "s"} × {t.lotSize} ·{" "}
-                  {new Date(lot.closedAt).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short" })}
-                </div>
-              </li>
-            ))}
+                    <span className={`text-sm font-semibold ${g.totalPnl >= 0 ? "text-accent" : "text-danger"}`}>
+                      {signedFmt(g.totalPnl, 0)}
+                    </span>
+                  </div>
+                  <div className="mt-1 text-[11px] text-muted">
+                    {g.mode === "sell" && g.longLeg && `Spread w/ ${legLabel(g.longLeg)} · `}
+                    Entry {fmt(avgEntry)} → Exit {fmt(avgExit)} · {g.totalLots} lot{g.totalLots === 1 ? "" : "s"} × {g.lotSize}
+                    {g.eventCount > 1 && ` · ${g.eventCount} closes`} ·{" "}
+                    {new Date(g.lastClosedAt).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short" })}
+                  </div>
+                </li>
+              );
+            })}
           </ul>
         </>
       )}
