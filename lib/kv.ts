@@ -55,11 +55,14 @@ export type StoredSignal = {
 
 export type LatestSignals = { date: string; runAt: string; signals: StoredSignal[] };
 
-// The full F&O stock list is split into this many slices (see
-// partitionForBatch in runDailyStrategy.ts), each running as its own
-// scheduled/manual invocation so none of them individually exceeds Vercel
-// Hobby's 60s function-duration cap.
-export const BATCH_IDS = ["A", "B"] as const;
+// The full F&O stock list (every symbol, no pre-filtering — see
+// runDailyStrategy.ts) is split into this many slices for the Daily pass
+// (see partitionForBatch), each running as its own scheduled/manual
+// invocation so none of them individually exceeds Vercel Hobby's 60s
+// function-duration cap. The 4H pass only ever uses batch "A" now (it's
+// index-only — 5 symbols, no batching needed), but shares this same
+// BatchId type/key scheme rather than a separate one.
+export const BATCH_IDS = ["A", "B", "C"] as const;
 export type BatchId = (typeof BATCH_IDS)[number];
 
 type StoredBatchPayload = { signals: StoredSignal[]; savedAt: string };

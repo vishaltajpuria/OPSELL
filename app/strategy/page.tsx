@@ -47,7 +47,8 @@ export default async function StrategyPage() {
     <main className="px-4 pt-6">
       <h1 className="text-xl font-semibold">Strategy</h1>
       <p className="mt-1 text-sm text-muted">
-        Supertrend(14,1) + SMA20/50/100/200 crossover — Daily &amp; 4H, full F&amp;O stock list plus all 5 indices
+        Supertrend(14,1) + SMA20/50/100/200 crossover — Daily on the full F&amp;O stock list plus all 5 indices, 4H on
+        the 5 indices only
       </p>
 
       <div className="mt-4">

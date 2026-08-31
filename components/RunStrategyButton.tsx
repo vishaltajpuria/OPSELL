@@ -3,16 +3,17 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
-// Covers the full F&O list: 2 batches (A/B) x 2 timeframes (Daily/4H), run
-// sequentially as separate requests rather than one big call, since each
-// needs its own Vercel Hobby 60s budget and they share Kite's 3 req/sec
-// historical-data limit (running them in parallel would just hit rate
-// limits, not finish any faster).
+// Covers the full F&O stock list on Daily (3 batches, A/B/C — no
+// pre-filtering) plus indices on both Daily and 4H (folded into batch A of
+// each). Run sequentially as separate requests rather than one big call,
+// since each needs its own Vercel Hobby 60s budget and they share Kite's
+// 3 req/sec historical-data limit (running them in parallel would just hit
+// rate limits, not finish any faster).
 const STAGES = [
   { label: "Daily (1 of 4)", url: "/api/strategy/run?batch=A" },
   { label: "Daily (2 of 4)", url: "/api/strategy/run?batch=B" },
-  { label: "4H (3 of 4)", url: "/api/strategy/run-4h?batch=A" },
-  { label: "4H (4 of 4)", url: "/api/strategy/run-4h?batch=B" },
+  { label: "Daily (3 of 4)", url: "/api/strategy/run?batch=C" },
+  { label: "4H indices (4 of 4)", url: "/api/strategy/run-4h?batch=A" },
 ] as const;
 
 type Status = "idle" | "running" | "error";

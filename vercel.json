@@ -9,11 +9,11 @@
       "schedule": "35 10 * * 1-5"
     },
     {
-      "path": "/api/cron/daily-strategy-4h?batch=A",
+      "path": "/api/cron/daily-strategy?batch=C",
       "schedule": "40 10 * * 1-5"
     },
     {
-      "path": "/api/cron/daily-strategy-4h?batch=B",
+      "path": "/api/cron/daily-strategy-4h?batch=A",
       "schedule": "45 10 * * 1-5"
     }
   ]

@@ -3,12 +3,11 @@ import { getStoredAccessToken } from "@/lib/kv";
 import { BATCH_IDS, type BatchId } from "@/lib/kv";
 import { run4HTimeframeStrategy } from "@/lib/runDailyStrategy";
 
-// The 4H-timeframe pass — see api/cron/daily-strategy for the Daily pass.
-// Each call handles one batch (?batch=A or ?batch=B — see vercel.json for
-// the two separately-scheduled cron entries, staggered from each other and
-// from the Daily pass's entries) so each invocation stays under Vercel
-// Hobby's 60s hard cap and doesn't collide with another batch on Kite's
-// shared 3 req/sec historical-data limit.
+// The 4H-timeframe pass — indices only now (see api/cron/daily-strategy for
+// the Daily pass, which covers the full F&O stock list). Only ?batch=A
+// does real work (run4HTimeframeStrategy itself gates on it — 5 indices is
+// cheap enough for one invocation), so vercel.json only schedules that one
+// batch, staggered after the Daily pass's own cron entries.
 export const maxDuration = 300;
 
 function authorized(request: NextRequest): boolean {

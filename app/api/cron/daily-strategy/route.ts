@@ -3,11 +3,12 @@ import { getStoredAccessToken } from "@/lib/kv";
 import { BATCH_IDS, type BatchId } from "@/lib/kv";
 import { runDailyTimeframeStrategy } from "@/lib/runDailyStrategy";
 
-// This is the Daily-timeframe pass only — see api/cron/daily-strategy-4h for
-// the 4H pass. Each call handles one batch (?batch=A or ?batch=B — see
-// vercel.json for the two separately-scheduled cron entries that cover
-// both), so each invocation stays under Vercel Hobby's 60s hard cap (this
-// maxDuration value is only honored on paid plans). runDailyTimeframeStrategy()
+// This is the Daily-timeframe pass only, covering the FULL F&O stock list
+// (no pre-filtering) — see api/cron/daily-strategy-4h for the 4H pass,
+// which is indices-only. Each call handles one batch (?batch=A/B/C — see
+// vercel.json for the three separately-scheduled cron entries that cover
+// all of them), so each invocation stays under Vercel Hobby's 60s hard cap
+// (this maxDuration value is only honored on paid plans). runDailyTimeframeStrategy()
 // checkpoint-saves after the stocks phase, so a Hobby timeout during the
 // (much shorter) indices phase doesn't lose that batch's run.
 export const maxDuration = 300;

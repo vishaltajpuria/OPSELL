@@ -3,11 +3,11 @@ import { getAccessToken } from "@/lib/session";
 import { BATCH_IDS, type BatchId } from "@/lib/kv";
 import { runDailyTimeframeStrategy } from "@/lib/runDailyStrategy";
 
-// Daily-timeframe pass only — see api/strategy/run-4h for the 4H pass. Runs
-// one batch at a time (?batch=A or ?batch=B); the Strategy tab's button
-// calls all batches of both timeframes in sequence to cover the full F&O
-// list. Same duration profile as the cron job — see its route for the
-// Hobby-plan 60s ceiling note.
+// Daily-timeframe pass only, covering the full F&O stock list — see
+// api/strategy/run-4h for the 4H pass (indices only). Runs one batch at a
+// time (?batch=A/B/C); the Strategy tab's button calls all of them plus
+// the 4H pass in sequence to cover everything. Same duration profile as
+// the cron job — see its route for the Hobby-plan 60s ceiling note.
 export const maxDuration = 300;
 
 function parseBatch(request: NextRequest): BatchId | null {
