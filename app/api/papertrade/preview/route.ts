@@ -9,12 +9,18 @@ import { getPaperTrades } from "@/lib/kv";
 // user to review before confirming — nothing is persisted here.
 //
 // If a position on this (symbol, mode) is already open, this returns an
-// "increase" preview instead of a fresh plan: the EXISTING strike(s), just
-// a freshly-fetched current premium for them — never a newly-resolved
-// ATM/OTM strike, since today's could differ from the one already held.
-// /start re-resolves a fresh plan at confirm time for a brand-new position;
-// /increase re-fetches the existing position's live quote at confirm time —
-// either way nothing here is trusted as final, this is preview-only.
+// "increase" preview instead of a fresh plan by DEFAULT: the EXISTING
+// strike(s), just a freshly-fetched current premium for them — never a
+// newly-resolved ATM/OTM strike, since today's could differ from the one
+// already held. Pass forceNew: true to skip this and get a genuinely fresh
+// plan instead (new auto-picked strikes) even though a position already
+// exists — the client offers this as an explicit second choice ("open a
+// new separate position") rather than defaulting to it, since silently
+// opening a second position at a possibly-different strike is exactly what
+// the default behavior exists to avoid. /start re-resolves a fresh plan at
+// confirm time for a brand-new position; /increase re-fetches the existing
+// position's live quote at confirm time — either way nothing here is
+// trusted as final, this is preview-only.
 export async function POST(request: NextRequest) {
   if (!isConnected()) {
     return NextResponse.json({ error: "Not connected to Zerodha." }, { status: 401 });
@@ -39,10 +45,11 @@ export async function POST(request: NextRequest) {
   // contract — buildTradePlan itself enforces this is only available for
   // NIFTY, this route just passes the request through.
   const expiryMode = body?.expiryMode === "weekly" ? "weekly" : "monthly";
+  const forceNew = body?.forceNew === true;
 
   try {
     const trades = await getPaperTrades();
-    const existing = findOpenTrade(trades, symbol, mode);
+    const existing = forceNew ? undefined : findOpenTrade(trades, symbol, mode);
 
     if (existing) {
       const accessToken = requireAccessToken();
@@ -56,6 +63,7 @@ export async function POST(request: NextRequest) {
       }
       return NextResponse.json({
         isIncrease: true,
+        id: existing.id,
         symbol,
         direction,
         mode,

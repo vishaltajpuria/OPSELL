@@ -316,10 +316,16 @@ export async function buildTradePlan(
  * The already-open position for a (symbol, mode), if any — so opening
  * "another" trade on the same signal instead adds to the existing one at
  * its own strike, rather than resolving a fresh (and possibly different,
- * since ATM/OTM strikes move with the underlying) strike each time.
+ * since ATM/OTM strikes move with the underlying) strike each time. This
+ * is a DEFAULT/CONVENIENCE match, not a uniqueness guarantee — a user can
+ * deliberately open a second, independent position on the same (symbol,
+ * mode) at different strikes (see /start's forceNew), so more than one
+ * match is possible; the most recently opened one wins, for determinism.
  */
 export function findOpenTrade(trades: PaperTrade[], symbol: string, mode: "buy" | "sell"): PaperTrade | undefined {
-  return trades.find((t) => t.status === "open" && t.symbol === symbol && t.mode === mode);
+  const matches = trades.filter((t) => t.status === "open" && t.symbol === symbol && t.mode === mode);
+  if (matches.length === 0) return undefined;
+  return matches.reduce((latest, t) => (t.entryAt > latest.entryAt ? t : latest));
 }
 
 /** Every Kite quote key needed to mark one open trade to market. */

@@ -36,6 +36,7 @@ type FreshPlan = {
 
 type IncreasePlan = {
   isIncrease: true;
+  id: string;
   symbol: string;
   direction: "short" | "long";
   mode: "buy" | "sell";
@@ -264,6 +265,30 @@ export default function PaperTradeCandidates({
     }
   }
 
+  // Switches an "adding to existing position" preview over to a genuinely
+  // fresh, independent one instead — for when you deliberately want a
+  // second, separate position on this (symbol, mode) at its own strikes
+  // (e.g. another spread at a different level), not another top-up of the
+  // one you're already holding. Server-enforced via forceNew: true, both
+  // here and again at confirm time (see confirmTrade) — this preview alone
+  // isn't what actually opens anything.
+  async function startFresh() {
+    if (!preview) return;
+    setPreview({ ...preview, status: "loading" });
+    try {
+      const res = await fetch("/api/papertrade/preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ symbol: preview.symbol, direction: preview.direction, mode: preview.mode, forceNew: true }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to price a new position.");
+      setPreview((p) => (p ? { ...p, status: "ready", plan: data, error: null } : p));
+    } catch (err) {
+      setPreview((p) => (p ? { ...p, status: "error", error: err instanceof Error ? err.message : String(err) } : p));
+    }
+  }
+
   async function confirmTrade() {
     if (!preview || !preview.plan) return;
     const lots = Number(preview.lotsText);
@@ -275,7 +300,7 @@ export default function PaperTradeCandidates({
     try {
       const endpoint = preview.plan.isIncrease ? "/api/papertrade/increase" : "/api/papertrade/start";
       const body = preview.plan.isIncrease
-        ? { symbol: preview.symbol, mode: preview.mode, lots }
+        ? { id: preview.plan.id, lots }
         : {
             symbol: preview.symbol,
             direction: preview.direction,
@@ -293,6 +318,13 @@ export default function PaperTradeCandidates({
             // resolve a completely different expiry (and the locked
             // strike(s) above might not even exist on that chain).
             expiryMode: preview.plan.expiryMode,
+            // A fresh plan is always safe to open as a genuinely new
+            // position: either there was never an existing one to collide
+            // with, or the user explicitly chose "open a new separate
+            // position instead" (see startFresh) over adding to one that
+            // does exist — either way, /start's duplicate guard shouldn't
+            // block this confirm.
+            forceNew: true,
           };
       const res = await fetch(endpoint, {
         method: "POST",
@@ -351,6 +383,9 @@ export default function PaperTradeCandidates({
               {preview.plan.longLeg && <p>Spread w/ {legLabel(preview.plan.longLeg)}</p>}
               <p>Existing avg entry {fmt(preview.plan.existingEntryPremium)} → Current {fmt(preview.plan.currentPremium)}</p>
               <p>Expiry {preview.plan.expiry} · underlying {fmt(preview.plan.underlyingPrice)} · lot size {preview.plan.lotSize}</p>
+              <button onClick={startFresh} className="mt-1 text-[11px] text-accent underline decoration-dotted">
+                Open a new separate position instead
+              </button>
               <label className="mt-2 block">
                 Lots to add
                 <input

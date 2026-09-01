@@ -213,7 +213,7 @@ export default function PaperTradePositions() {
         const res = await fetch("/api/papertrade/increase", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ symbol: trade.symbol, mode: trade.mode, lots }),
+          body: JSON.stringify({ id: trade.id, lots }),
         });
         const data = await res.json();
         if (!res.ok) {

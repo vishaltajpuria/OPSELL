@@ -13,11 +13,16 @@ import { getPaperTrades, savePaperTrades, type PaperTrade } from "@/lib/kv";
 // contract to price fresh, not what its price is.
 //
 // Refuses to open a second position for a (symbol, mode) that already has
-// one open — /preview should have routed the client to /increase instead,
-// but this is the server-side backstop, since opening a second position at
-// a possibly-different strike (today's ATM/OTM can differ from the
-// existing position's) rather than adding to the existing one at its own
-// strike is exactly what was asked to be avoided.
+// one open, UNLESS forceNew is true — /preview should have routed the
+// client to /increase instead by default, but this is the server-side
+// backstop for the default case, since silently opening a second position
+// at a possibly-different strike (today's ATM/OTM can differ from the
+// existing position's) is exactly what the default behavior exists to
+// avoid. forceNew is the explicit escape hatch for when a second,
+// genuinely independent position on the same (symbol, mode) is what's
+// actually wanted (e.g. a new spread at different strikes) — the client
+// only sends it after the user has explicitly chosen that over adding to
+// the existing one.
 export async function POST(request: NextRequest) {
   if (!isConnected()) {
     return NextResponse.json({ error: "Not connected to Zerodha." }, { status: 401 });
@@ -46,10 +51,11 @@ export async function POST(request: NextRequest) {
   // Same optional weekly-expiry override as /preview (NIFTY only —
   // buildTradePlan enforces that).
   const expiryMode = body?.expiryMode === "weekly" ? "weekly" : "monthly";
+  const forceNew = body?.forceNew === true;
 
   try {
     const trades = await getPaperTrades();
-    if (findOpenTrade(trades, symbol, mode)) {
+    if (!forceNew && findOpenTrade(trades, symbol, mode)) {
       return NextResponse.json(
         { error: `Already have an open ${mode} position on ${symbol} — use the increase option on it instead of opening a new one.` },
         { status: 409 }
