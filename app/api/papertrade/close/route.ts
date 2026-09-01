@@ -67,6 +67,17 @@ export async function POST(request: NextRequest) {
     trade.currentUnderlyingPrice = result.remainingLots > 0 ? mark.underlyingPrice : null;
     trade.underlyingChangeValue = result.remainingLots > 0 ? mark.underlyingChangeValue : null;
     trade.underlyingChangePercent = result.remainingLots > 0 ? mark.underlyingChangePercent : null;
+    // Capital just changed (released, in full or in part) — log the new
+    // level so Performance's capital-deployed timeline reflects the close
+    // at the moment it happened. A full close genuinely drops to 0 (always
+    // logged); a partial close's new lower level is only logged if it's
+    // actually known (skipped if the pre-close capital itself was unknown,
+    // same "don't guess" rule as elsewhere).
+    if (result.remainingLots === 0) {
+      trade.capitalHistory.push({ at: now, capitalRequired: 0 });
+    } else if (typeof result.remainingCapitalRequired === "number") {
+      trade.capitalHistory.push({ at: now, capitalRequired: result.remainingCapitalRequired });
+    }
 
     await savePaperTrades(trades);
     return NextResponse.json({ trade });

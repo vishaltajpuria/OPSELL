@@ -47,12 +47,22 @@ export async function POST(request: NextRequest) {
     trade.entryPremium = weightedAveragePremium(trade.entryPremium, trade.lots, mark.premium, addLots);
     trade.lots = newLots;
     trade.capitalRequired = await computeMarginForQuantity(trade, newLots, accessToken);
+    const now = new Date();
+    const nowIso = now.toISOString();
     trade.lastMarkPremium = mark.premium;
-    trade.lastMarkAt = new Date().toISOString();
-    trade.todayPnl = computeTodayPnl(trade, quotes, new Date());
+    trade.lastMarkAt = nowIso;
+    trade.todayPnl = computeTodayPnl(trade, quotes, now);
     trade.currentUnderlyingPrice = mark.underlyingPrice;
     trade.underlyingChangeValue = mark.underlyingChangeValue;
     trade.underlyingChangePercent = mark.underlyingChangePercent;
+    // Capital just changed (more lots) — log the new level so Performance's
+    // capital-deployed timeline reflects the top-up at the moment it
+    // happened, not just the trade's final size. Skipped if the margin
+    // lookup for the new size failed (capitalRequired null) — the ledger
+    // just holds its last known level rather than recording a wrong one.
+    if (typeof trade.capitalRequired === "number") {
+      trade.capitalHistory.push({ at: nowIso, capitalRequired: trade.capitalRequired });
+    }
 
     await savePaperTrades(trades);
     return NextResponse.json({ trade });

@@ -110,6 +110,14 @@ export async function getLatestSignals(): Promise<LatestSignals | null> {
 
 export type PaperTradeLeg = { tradingsymbol: string; strike: number; optionType: "CE" | "PE" };
 
+// One step in a trade's own capital-required-over-time ledger — a new
+// entry is appended whenever the trade's capitalRequired actually changes
+// (open, add, partial/full close), so lib/performance.ts can reconstruct
+// how much capital was tied up across the WHOLE portfolio at any point in
+// time, not just how much a given month's closed events happened to
+// release. 0 once the trade is fully closed (all capital freed).
+export type CapitalSnapshot = { at: string; capitalRequired: number };
+
 // One partial (or the final, fully-closing) realization event on a
 // position — a position can be trimmed more than once over its life, each
 // trim its own realized P&L, so this is an array on the trade rather than a
@@ -171,6 +179,12 @@ export type PaperTrade = {
   currentUnderlyingPrice: number | null;
   underlyingChangeValue: number | null;
   underlyingChangePercent: number | null;
+  // See CapitalSnapshot above. Always has at least one entry once a trade
+  // has ever had a known capitalRequired; stays empty if capital was never
+  // known at any point (e.g. every margin lookup for this trade failed),
+  // which lib/performance.ts's timeline treats as "no capital contribution
+  // from this trade" rather than guessing.
+  capitalHistory: CapitalSnapshot[];
 };
 
 const PAPER_TRADES_KEY = "papertrades:all";
@@ -181,19 +195,55 @@ const PAPER_TRADES_KEY = "papertrades:all";
 // dropping history.
 type StoredPaperTradeShape = Omit<
   PaperTrade,
-  "closedLots" | "capitalRequired" | "todayPnl" | "currentUnderlyingPrice" | "underlyingChangeValue" | "underlyingChangePercent"
+  | "closedLots"
+  | "capitalRequired"
+  | "todayPnl"
+  | "currentUnderlyingPrice"
+  | "underlyingChangeValue"
+  | "underlyingChangePercent"
+  | "capitalHistory"
 > & {
   capitalRequired?: number | null;
   todayPnl?: number | null;
   currentUnderlyingPrice?: number | null;
   underlyingChangeValue?: number | null;
   underlyingChangePercent?: number | null;
+  capitalHistory?: CapitalSnapshot[];
   closedLots?: ClosedLot[];
   // Pre-partial-close schema: a single top-level exit instead of an array.
   exitAt?: string | null;
   exitUnderlyingPrice?: number | null;
   exitPremium?: number | null;
 };
+
+/**
+ * Best-effort capitalHistory for a trade that predates this field —
+ * there's no real record of how its capital level changed over time, so
+ * this approximates it as constant for the trade's whole open life: the
+ * current known capitalRequired if still open, or the total capital ever
+ * released across its closedLots if fully closed (with a closing 0 entry
+ * at its last close). Slightly overstates a topped-up-then-trimmed old
+ * trade's true footprint at any given moment, but it's the only data
+ * available for records written before capital changes were logged —
+ * every trade going forward gets an exact step-by-step history instead.
+ */
+function synthesizeCapitalHistory(
+  t: Pick<StoredPaperTradeShape, "entryAt" | "status" | "lots">,
+  closedLots: ClosedLot[],
+  currentCapitalRequired: number | null
+): CapitalSnapshot[] {
+  const isFullyClosed = t.status === "closed" || t.lots <= 0;
+  const everReleased = closedLots.reduce((sum, lot) => sum + (typeof lot.capitalReleased === "number" ? lot.capitalReleased : 0), 0);
+  const openingCapital = isFullyClosed ? everReleased : (currentCapitalRequired ?? 0);
+  if (openingCapital <= 0) return [];
+
+  const history: CapitalSnapshot[] = [{ at: t.entryAt, capitalRequired: openingCapital }];
+  if (isFullyClosed) {
+    const lastClosedAt = closedLots.length > 0 ? closedLots[closedLots.length - 1].closedAt : t.entryAt;
+    history.push({ at: lastClosedAt, capitalRequired: 0 });
+  }
+  return history;
+}
 
 // Stored as one JSON array under a single key — manual entry/exit only
 // (no automated writer), so volume stays low enough that this doesn't need
@@ -214,6 +264,10 @@ export async function getPaperTrades(): Promise<PaperTrade[]> {
         currentUnderlyingPrice: t.currentUnderlyingPrice ?? null,
         underlyingChangeValue: t.underlyingChangeValue ?? null,
         underlyingChangePercent: t.underlyingChangePercent ?? null,
+        capitalHistory:
+          Array.isArray(t.capitalHistory) && t.capitalHistory.length > 0
+            ? t.capitalHistory
+            : synthesizeCapitalHistory(t, t.closedLots, capitalRequired),
       };
     }
 
@@ -262,6 +316,14 @@ export async function getPaperTrades(): Promise<PaperTrade[]> {
       currentUnderlyingPrice: t.currentUnderlyingPrice ?? null,
       underlyingChangeValue: t.underlyingChangeValue ?? null,
       underlyingChangePercent: t.underlyingChangePercent ?? null,
+      capitalHistory:
+        Array.isArray(t.capitalHistory) && t.capitalHistory.length > 0
+          ? t.capitalHistory
+          : synthesizeCapitalHistory(
+              { entryAt: t.entryAt, status: hasLegacyExit ? "closed" : t.status, lots: hasLegacyExit ? 0 : t.lots },
+              closedLots,
+              hasLegacyExit ? null : capitalRequired
+            ),
     };
   });
 }

@@ -1,15 +1,19 @@
 import type { PaperTrade, ClosedLot } from "@/lib/kv";
-import { computePnlPerShare } from "@/lib/paperTrading";
+import { computePnlPerShare, buildCapitalTimeline, type CapitalTimelinePoint } from "@/lib/paperTrading";
 
 export type MonthlyPerformance = {
   month: string; // "YYYY-MM"
   tradeCount: number; // number of close EVENTS (a partial close counts on its own), not distinct positions
   wins: number;
   losses: number;
-  totalPnl: number; // ₹, realized
-  totalCapital: number; // ₹, sum of capitalReleased across events this month that have one
-  unknownCapitalCount: number; // events this month with no capital figure — excluded from totalCapital/returnPercent
-  returnPercent: number | null; // totalPnl / totalCapital * 100 — null if no event this month has a known capital figure
+  totalPnl: number; // ₹, realized THIS MONTH only (events whose closedAt falls in this month)
+  // Peak total capital the WHOLE portfolio had deployed at any single
+  // point in time during this month — not a sum of what happened to close
+  // this month. A position opened in an earlier month and still open
+  // through this one counts toward this month's peak too, for as long as
+  // it overlaps it.
+  maxCapitalDeployed: number;
+  returnPercent: number | null; // totalPnl / maxCapitalDeployed * 100 — null if nothing was ever deployed this month (maxCapitalDeployed is 0)
   returnOnBasePercent: number; // totalPnl / capitalBase * 100 — always known, since the base is a fixed setting
 };
 
@@ -24,8 +28,7 @@ export type PerformanceSummary = {
     wins: number;
     losses: number;
     totalPnl: number;
-    totalCapital: number;
-    unknownCapitalCount: number;
+    maxCapitalDeployed: number; // peak total capital deployed at any point across the WHOLE trading history (including right now, if a position is still open)
     returnPercent: number | null;
     returnOnBasePercent: number;
   };
@@ -39,6 +42,34 @@ export type PerformanceSummary = {
   currentPortfolioValue: number;
 };
 
+function monthBounds(monthKey: string): { start: string; end: string } {
+  const [y, m] = monthKey.split("-").map(Number);
+  const start = new Date(Date.UTC(y, m - 1, 1)).toISOString();
+  const end = new Date(Date.UTC(m === 12 ? y + 1 : y, m === 12 ? 0 : m, 1)).toISOString();
+  return { start, end };
+}
+
+/**
+ * The peak of a capital-deployed step-function timeline (see
+ * buildCapitalTimeline in lib/paperTrading.ts) within [startIso, endIso) —
+ * the level carried in from before the window (the last point at or before
+ * `startIso`) counts too, since a position opened earlier and still open
+ * through this window was genuinely deploying capital throughout it, not
+ * starting fresh at 0. Between two points a step function is constant, so
+ * its max over any interval is always achieved exactly at one of the step
+ * points (the carried-in level, or right after an event inside the
+ * window) — no need to also check "just before the window ends".
+ */
+function maxCapitalInRange(timeline: CapitalTimelinePoint[], startIso: string, endIso: string): number {
+  let carriedIn = 0;
+  let maxInside = 0;
+  for (const p of timeline) {
+    if (p.at <= startIso) carriedIn = p.total;
+    else if (p.at < endIso && p.total > maxInside) maxInside = p.total;
+  }
+  return Math.max(carriedIn, maxInside);
+}
+
 /**
  * Monthly and cumulative performance from the paper-trade ledger, computed
  * fresh from whatever's currently stored — no separate cache to keep in
@@ -48,14 +79,25 @@ export type PerformanceSummary = {
  * Each entry in a trade's closedLots (see lib/kv.ts) is its own realized
  * event — a position added to and trimmed several times over its life
  * contributes one event per trim, not one event per position, each
- * counting toward the month IT was closed in (closedAt), not when the
- * position was originally opened. A month's return % is capital-weighted,
- * not an average of each event's own % return: sum of that month's P&L
- * divided by the sum of capitalReleased for the events that closed that
- * month, so a bigger position counts for more. There's no fixed starting
- * portfolio size assumed anywhere — "capital deployed" for a month is just
- * whatever capital the events that closed that month actually released,
- * summed.
+ * counting toward the month IT was closed in (closedAt), independently. A
+ * position added to and trimmed three times over two months contributes to
+ * however many of those months it was actually trimmed in, at that trim's
+ * own P&L — not one lump sum attributed to whenever it finally reaches
+ * zero. An open position's mark-to-market never affects a month's return
+ * (shown separately, as a single "currently unrealized" note, since it can
+ * still move either way before you actually close it).
+ *
+ * A month's return % is realized P&L divided by the PEAK total capital the
+ * whole portfolio actually had deployed at any single point in time during
+ * that month (`maxCapitalDeployed`, reconstructed from every trade's
+ * capitalHistory — see buildCapitalTimeline) — not the sum of capital that
+ * happened to be released by events closing that month, which could wildly
+ * over- or under-state how hard the capital was actually working: summing
+ * overstates it when several non-overlapping positions each release their
+ * own capital in the same month (you never had all of it deployed at
+ * once), and understates it when a position stays open past month-end
+ * (its capital was fully at risk all month, but contributes nothing to a
+ * "released this month" sum since it hasn't released yet).
  *
  * capitalBase is a separate, fixed reference point (see getCapitalBase in
  * lib/kv.ts) used only to express returns as a % of the whole book instead
@@ -64,6 +106,7 @@ export type PerformanceSummary = {
  */
 export function computePerformance(trades: PaperTrade[], capitalBase: number): PerformanceSummary {
   const events: ClosedLot[] = trades.flatMap((t) => t.closedLots);
+  const timeline = buildCapitalTimeline(trades);
 
   const byMonth = new Map<string, ClosedLot[]>();
   for (const e of events) {
@@ -78,24 +121,21 @@ export function computePerformance(trades: PaperTrade[], capitalBase: number): P
     .map((month) => {
       const es = byMonth.get(month)!;
       let totalPnl = 0;
-      let totalCapital = 0;
-      let unknownCapitalCount = 0;
       let wins = 0;
       for (const e of es) {
         totalPnl += e.pnl;
         if (e.pnl > 0) wins++;
-        if (typeof e.capitalReleased === "number") totalCapital += e.capitalReleased;
-        else unknownCapitalCount++;
       }
+      const { start, end } = monthBounds(month);
+      const maxCapitalDeployed = maxCapitalInRange(timeline, start, end);
       return {
         month,
         tradeCount: es.length,
         wins,
         losses: es.length - wins,
         totalPnl,
-        totalCapital,
-        unknownCapitalCount,
-        returnPercent: totalCapital > 0 ? (totalPnl / totalCapital) * 100 : null,
+        maxCapitalDeployed,
+        returnPercent: maxCapitalDeployed > 0 ? (totalPnl / maxCapitalDeployed) * 100 : null,
         returnOnBasePercent: (totalPnl / capitalBase) * 100,
       };
     });
@@ -113,11 +153,14 @@ export function computePerformance(trades: PaperTrade[], capitalBase: number): P
       wins: acc.wins + m.wins,
       losses: acc.losses + m.losses,
       totalPnl: acc.totalPnl + m.totalPnl,
-      totalCapital: acc.totalCapital + m.totalCapital,
-      unknownCapitalCount: acc.unknownCapitalCount + m.unknownCapitalCount,
     }),
-    { tradeCount: 0, wins: 0, losses: 0, totalPnl: 0, totalCapital: 0, unknownCapitalCount: 0 }
+    { tradeCount: 0, wins: 0, losses: 0, totalPnl: 0 }
   );
+  // The peak across the WHOLE history equals the max of the timeline's own
+  // totals — including its very last point, which reflects right now (a
+  // still-open position's most recent capital change), not just a
+  // historical month's peak.
+  const overallMaxCapitalDeployed = timeline.reduce((max, p) => Math.max(max, p.total), 0);
 
   const openPositionsUnrealizedPnl = trades
     .filter((t) => t.status === "open" && t.lots > 0)
@@ -132,7 +175,8 @@ export function computePerformance(trades: PaperTrade[], capitalBase: number): P
     portfolioValue,
     overall: {
       ...overallBase,
-      returnPercent: overallBase.totalCapital > 0 ? (overallBase.totalPnl / overallBase.totalCapital) * 100 : null,
+      maxCapitalDeployed: overallMaxCapitalDeployed,
+      returnPercent: overallMaxCapitalDeployed > 0 ? (overallBase.totalPnl / overallMaxCapitalDeployed) * 100 : null,
       returnOnBasePercent: (overallBase.totalPnl / capitalBase) * 100,
     },
     openPositionsUnrealizedPnl,

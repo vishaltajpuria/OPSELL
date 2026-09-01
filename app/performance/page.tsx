@@ -35,8 +35,8 @@ export default async function PerformancePage() {
     <main className="px-4 pt-6 pb-4">
       <h1 className="text-xl font-semibold">Performance</h1>
       <p className="mt-1 text-sm text-muted">
-        Realized returns from closed paper trades, on the capital those trades required — nothing here counts a
-        position until it's actually closed.
+        Realized returns from closed paper trades, on the peak capital actually deployed at any one time — nothing
+        here counts a position until it's actually closed.
       </p>
 
       {error && (
@@ -69,7 +69,7 @@ export default async function PerformancePage() {
       {!error && summary && summary.overall.tradeCount > 0 && (
         <>
           <div className="mt-4 rounded-xl border border-border bg-surface p-4">
-            <p className="text-xs text-muted">Overall return on capital deployed</p>
+            <p className="text-xs text-muted">Overall return on max capital deployed</p>
             <p className={`mt-1 text-2xl font-semibold ${summary.overall.totalPnl >= 0 ? "text-accent" : "text-danger"}`}>
               {summary.overall.returnPercent !== null ? `${signedFmt(summary.overall.returnPercent, 1)}%` : "—"}
             </p>
@@ -78,8 +78,8 @@ export default async function PerformancePage() {
               <span className={`text-right font-medium ${summary.overall.totalPnl >= 0 ? "text-accent" : "text-danger"}`}>
                 ₹{signedFmt(summary.overall.totalPnl)}
               </span>
-              <span className="text-muted">Capital deployed</span>
-              <span className="text-right font-medium">₹{fmt(summary.overall.totalCapital)}</span>
+              <span className="text-muted">Max capital deployed</span>
+              <span className="text-right font-medium">₹{fmt(summary.overall.maxCapitalDeployed)}</span>
               <span className="text-muted">Return on ₹{fmt(summary.capitalBase)} base</span>
               <span className={`text-right font-medium ${summary.overall.returnOnBasePercent >= 0 ? "text-accent" : "text-danger"}`}>
                 {signedFmt(summary.overall.returnOnBasePercent, 2)}%
@@ -89,13 +89,11 @@ export default async function PerformancePage() {
                 {summary.overall.tradeCount} ({summary.overall.wins}W / {summary.overall.losses}L)
               </span>
             </div>
-            {summary.overall.unknownCapitalCount > 0 && (
-              <p className="mt-2 text-[10px] text-danger">
-                {summary.overall.unknownCapitalCount} closed trade{summary.overall.unknownCapitalCount === 1 ? "" : "s"} had no
-                capital figure and {summary.overall.unknownCapitalCount === 1 ? "isn't" : "aren't"} included in the capital or
-                return figures above (P&amp;L is).
-              </p>
-            )}
+            <p className="mt-2 text-[10px] text-muted">
+              &ldquo;Max capital deployed&rdquo; is the peak total capital the whole book ever had in use at one time
+              (not a sum across trades) — a position that never overlapped another counts on its own, not stacked
+              with the rest.
+            </p>
             {summary.openPositionsUnrealizedPnl !== 0 && (
               <p className="mt-2 text-[10px] text-muted">
                 Open positions currently mark {summary.openPositionsUnrealizedPnl >= 0 ? "+" : ""}
@@ -148,9 +146,8 @@ export default async function PerformancePage() {
                   </span>
                 </div>
                 <div className="mt-1 text-[11px] text-muted">
-                  ₹{signedFmt(m.totalPnl)} on ₹{fmt(m.totalCapital)} capital ({signedFmt(m.returnOnBasePercent, 2)}% of base) ·{" "}
-                  {m.tradeCount} trade{m.tradeCount === 1 ? "" : "s"} ({m.wins}W / {m.losses}L)
-                  {m.unknownCapitalCount > 0 && ` · ${m.unknownCapitalCount} excluded (no capital figure)`}
+                  ₹{signedFmt(m.totalPnl)} on ₹{fmt(m.maxCapitalDeployed)} max capital ({signedFmt(m.returnOnBasePercent, 2)}% of
+                  base) · {m.tradeCount} trade{m.tradeCount === 1 ? "" : "s"} ({m.wins}W / {m.losses}L)
                 </div>
               </li>
             ))}

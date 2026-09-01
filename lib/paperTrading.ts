@@ -1,7 +1,7 @@
 import { getOptionChain, spotQuoteKey, type ChainRow } from "@/lib/optionChain";
 import { getOptionExpiries } from "@/lib/instruments";
 import { getBasketMargin, quoteMidPrice, type Quote, type MarginOrder } from "@/lib/kite";
-import type { PaperTrade } from "@/lib/kv";
+import type { PaperTrade, CapitalSnapshot } from "@/lib/kv";
 
 // "Buy ATM option of current month expiry (if more than 12 trading sessions
 // are left, otherwise buy next month expiry option)" — the threshold as
@@ -544,6 +544,39 @@ export function findDuplicateOpenGroups(trades: PaperTrade[]): PaperTrade[][] {
  * differently, so the caller re-prices it fresh for the combined lot count
  * rather than summing two possibly-stale figures.
  */
+export type CapitalTimelinePoint = { at: string; total: number };
+
+/**
+ * Merges multiple trades' own capitalHistory step-functions into one
+ * combined step-function of TOTAL capital in use across all of them over
+ * time — a sweep across every recorded change, tracking each trade's
+ * latest known level and summing. Used both to reconstruct a
+ * portfolio-wide capital-deployed timeline (see computePerformance in
+ * lib/performance.ts) and to consolidate a duplicate-trade merge's
+ * pre-merge history into one accurate combined timeline (below), rather
+ * than losing it.
+ */
+export function buildCapitalTimeline(trades: Pick<PaperTrade, "id" | "capitalHistory">[]): CapitalTimelinePoint[] {
+  const events: { at: string; id: string; capital: number }[] = [];
+  for (const t of trades) {
+    for (const snap of t.capitalHistory) {
+      events.push({ at: snap.at, id: t.id, capital: snap.capitalRequired });
+    }
+  }
+  events.sort((a, b) => a.at.localeCompare(b.at));
+
+  const current = new Map<string, number>();
+  let runningTotal = 0;
+  const timeline: CapitalTimelinePoint[] = [];
+  for (const e of events) {
+    runningTotal -= current.get(e.id) ?? 0;
+    runningTotal += e.capital;
+    current.set(e.id, e.capital);
+    timeline.push({ at: e.at, total: runningTotal });
+  }
+  return timeline;
+}
+
 export function mergeOpenTradeGroup(group: PaperTrade[]): PaperTrade {
   const sorted = [...group].sort((a, b) => a.entryAt.localeCompare(b.entryAt));
   const earliest = sorted[0];
@@ -553,6 +586,11 @@ export function mergeOpenTradeGroup(group: PaperTrade[]): PaperTrade {
   const latestMarked = sorted
     .filter((t) => typeof t.lastMarkAt === "string")
     .sort((a, b) => (b.lastMarkAt as string).localeCompare(a.lastMarkAt as string))[0];
+  // Each duplicate only ever logged its OWN capital, not the group's
+  // combined total — reconstructing their true combined history (rather
+  // than just keeping the earliest one's, which would understate it) is
+  // exactly what buildCapitalTimeline is for.
+  const capitalHistory: CapitalSnapshot[] = buildCapitalTimeline(sorted).map((p) => ({ at: p.at, capitalRequired: p.total }));
 
   return {
     ...earliest,
@@ -562,6 +600,7 @@ export function mergeOpenTradeGroup(group: PaperTrade[]): PaperTrade {
     lastMarkPremium: latestMarked?.lastMarkPremium ?? null,
     lastMarkAt: latestMarked?.lastMarkAt ?? null,
     capitalRequired: null,
+    capitalHistory,
     // Each duplicate's todayPnl was sized for its OWN lots, not the merged
     // total — carrying one over would misstate it. Corrected on the next
     // Live press, same as capitalRequired above.

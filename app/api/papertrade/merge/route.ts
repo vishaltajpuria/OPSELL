@@ -27,6 +27,12 @@ export async function POST() {
     for (const group of groups) {
       const merged = mergeOpenTradeGroup(group);
       merged.capitalRequired = await computeMarginForQuantity(merged, merged.lots, accessToken);
+      // The pre-merge history (already the group's reconstructed combined
+      // total — see buildCapitalTimeline in mergeOpenTradeGroup) predates
+      // this fresh re-pricing; append it as the latest point.
+      if (typeof merged.capitalRequired === "number") {
+        merged.capitalHistory.push({ at: new Date().toISOString(), capitalRequired: merged.capitalRequired });
+      }
       mergedTrades.push(merged);
     }
 

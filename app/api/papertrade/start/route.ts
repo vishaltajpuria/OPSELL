@@ -87,6 +87,7 @@ export async function POST(request: NextRequest) {
       // pick strikes) — filled in by the first Live press instead.
       underlyingChangeValue: null,
       underlyingChangePercent: null,
+      capitalHistory: typeof capitalRequired === "number" ? [{ at: now, capitalRequired }] : [],
     };
 
     trades.push(trade);
