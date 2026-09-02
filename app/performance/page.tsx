@@ -70,9 +70,14 @@ export default async function PerformancePage() {
         <>
           <div className="mt-4 rounded-xl border border-border bg-surface p-4">
             <p className="text-xs text-muted">Overall return on max capital deployed</p>
-            <p className={`mt-1 text-2xl font-semibold ${summary.overall.totalPnl >= 0 ? "text-accent" : "text-danger"}`}>
-              {summary.overall.returnPercent !== null ? `${signedFmt(summary.overall.returnPercent, 1)}%` : "—"}
-            </p>
+            <div className="mt-1 flex items-baseline gap-2">
+              <p className={`text-2xl font-semibold ${summary.overall.totalPnl >= 0 ? "text-accent" : "text-danger"}`}>
+                {summary.overall.returnPercent !== null ? `${signedFmt(summary.overall.returnPercent, 1)}%` : "—"}
+              </p>
+              <p className="text-xs text-muted">
+                {summary.overall.tradingDayCount} day{summary.overall.tradingDayCount === 1 ? "" : "s"} traded
+              </p>
+            </div>
             <div className="mt-3 grid grid-cols-2 gap-y-1.5 text-sm">
               <span className="text-muted">Realized P&amp;L</span>
               <span className={`text-right font-medium ${summary.overall.totalPnl >= 0 ? "text-accent" : "text-danger"}`}>
@@ -147,7 +152,8 @@ export default async function PerformancePage() {
                 </div>
                 <div className="mt-1 text-[11px] text-muted">
                   ₹{signedFmt(m.totalPnl)} on ₹{fmt(m.maxCapitalDeployed)} max capital ({signedFmt(m.returnOnBasePercent, 2)}% of
-                  base) · {m.tradeCount} trade{m.tradeCount === 1 ? "" : "s"} ({m.wins}W / {m.losses}L)
+                  base) · {m.tradeCount} trade{m.tradeCount === 1 ? "" : "s"} ({m.wins}W / {m.losses}L) ·{" "}
+                  {m.tradingDayCount} day{m.tradingDayCount === 1 ? "" : "s"} traded
                 </div>
               </li>
             ))}

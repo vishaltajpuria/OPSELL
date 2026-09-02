@@ -15,6 +15,7 @@ export type MonthlyPerformance = {
   maxCapitalDeployed: number;
   returnPercent: number | null; // totalPnl / maxCapitalDeployed * 100 — null if nothing was ever deployed this month (maxCapitalDeployed is 0)
   returnOnBasePercent: number; // totalPnl / capitalBase * 100 — always known, since the base is a fixed setting
+  tradingDayCount: number; // distinct calendar days (UTC, closedAt.slice(0,10)) this month with at least one realized close event
 };
 
 export type PerformanceSummary = {
@@ -31,6 +32,7 @@ export type PerformanceSummary = {
     maxCapitalDeployed: number; // peak total capital deployed at any point across the WHOLE trading history (including right now, if a position is still open)
     returnPercent: number | null;
     returnOnBasePercent: number;
+    tradingDayCount: number; // distinct calendar days (UTC) with at least one realized close event, across all time
   };
   // Current mark-to-market of still-open lots across all positions — shown
   // separately, not folded into any month's return, since it isn't
@@ -128,6 +130,7 @@ export function computePerformance(trades: PaperTrade[], capitalBase: number): P
       }
       const { start, end } = monthBounds(month);
       const maxCapitalDeployed = maxCapitalInRange(timeline, start, end);
+      const tradingDayCount = new Set(es.map((e) => e.closedAt.slice(0, 10))).size;
       return {
         month,
         tradeCount: es.length,
@@ -137,6 +140,7 @@ export function computePerformance(trades: PaperTrade[], capitalBase: number): P
         maxCapitalDeployed,
         returnPercent: maxCapitalDeployed > 0 ? (totalPnl / maxCapitalDeployed) * 100 : null,
         returnOnBasePercent: (totalPnl / capitalBase) * 100,
+        tradingDayCount,
       };
     });
 
@@ -161,6 +165,7 @@ export function computePerformance(trades: PaperTrade[], capitalBase: number): P
   // still-open position's most recent capital change), not just a
   // historical month's peak.
   const overallMaxCapitalDeployed = timeline.reduce((max, p) => Math.max(max, p.total), 0);
+  const overallTradingDayCount = new Set(events.map((e) => e.closedAt.slice(0, 10))).size;
 
   const openPositionsUnrealizedPnl = trades
     .filter((t) => t.status === "open" && t.lots > 0)
@@ -178,6 +183,7 @@ export function computePerformance(trades: PaperTrade[], capitalBase: number): P
       maxCapitalDeployed: overallMaxCapitalDeployed,
       returnPercent: overallMaxCapitalDeployed > 0 ? (overallBase.totalPnl / overallMaxCapitalDeployed) * 100 : null,
       returnOnBasePercent: (overallBase.totalPnl / capitalBase) * 100,
+      tradingDayCount: overallTradingDayCount,
     },
     openPositionsUnrealizedPnl,
     capitalBase,
