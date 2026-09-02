@@ -3,6 +3,7 @@ import { isConnected } from "@/lib/session";
 import { getPaperTrades, getCapitalBase } from "@/lib/kv";
 import { computePerformance } from "@/lib/performance";
 import CapitalBaseEditor from "@/components/CapitalBaseEditor";
+import ReturnCagrToggle from "@/components/ReturnCagrToggle";
 
 export const dynamic = "force-dynamic";
 
@@ -70,14 +71,13 @@ export default async function PerformancePage() {
         <>
           <div className="mt-4 rounded-xl border border-border bg-surface p-4">
             <p className="text-xs text-muted">Overall return on max capital deployed</p>
-            <div className="mt-1 flex items-baseline gap-2">
-              <p className={`text-2xl font-semibold ${summary.overall.totalPnl >= 0 ? "text-accent" : "text-danger"}`}>
-                {summary.overall.returnPercent !== null ? `${signedFmt(summary.overall.returnPercent, 1)}%` : "—"}
-              </p>
-              <p className="text-xs text-muted">
-                {summary.overall.tradingDayCount} day{summary.overall.tradingDayCount === 1 ? "" : "s"} traded
-              </p>
-            </div>
+            <ReturnCagrToggle
+              returnPercent={summary.overall.returnPercent}
+              cagrPercent={summary.overall.cagrPercent}
+              tradingDayCount={summary.overall.tradingDayCount}
+              daysSinceStart={summary.overall.daysSinceStart}
+              totalPnl={summary.overall.totalPnl}
+            />
             <div className="mt-3 grid grid-cols-2 gap-y-1.5 text-sm">
               <span className="text-muted">Realized P&amp;L</span>
               <span className={`text-right font-medium ${summary.overall.totalPnl >= 0 ? "text-accent" : "text-danger"}`}>

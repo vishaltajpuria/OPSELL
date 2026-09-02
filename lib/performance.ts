@@ -33,6 +33,9 @@ export type PerformanceSummary = {
     returnPercent: number | null;
     returnOnBasePercent: number;
     tradingDayCount: number; // distinct calendar days (UTC) with at least one realized close event, across all time
+    tradingStartAt: string | null; // earliest entryAt across all trades (open or closed) — null if no trades yet
+    daysSinceStart: number | null; // CALENDAR days from tradingStartAt to now, including days nothing was traded — null if tradingStartAt is null
+    cagrPercent: number | null; // returnPercent annualized over daysSinceStart — null whenever returnPercent or daysSinceStart itself is null, or daysSinceStart < 1, or the capital was wiped out (1 + returnPercent/100 <= 0)
   };
   // Current mark-to-market of still-open lots across all positions — shown
   // separately, not folded into any month's return, since it isn't
@@ -167,6 +170,27 @@ export function computePerformance(trades: PaperTrade[], capitalBase: number): P
   const overallMaxCapitalDeployed = timeline.reduce((max, p) => Math.max(max, p.total), 0);
   const overallTradingDayCount = new Set(events.map((e) => e.closedAt.slice(0, 10))).size;
 
+  // CAGR annualizes the overall return over CALENDAR days elapsed since the
+  // very first trade was opened — every day counts, not just the days a
+  // trade was actually closed, so a slow month doesn't get erased from the
+  // denominator the way tradingDayCount would.
+  const tradingStartAt = trades.length > 0 ? trades.reduce((min, t) => (t.entryAt < min ? t.entryAt : min), trades[0].entryAt) : null;
+  const daysSinceStart = tradingStartAt
+    ? Math.max(1, Math.ceil((Date.now() - new Date(tradingStartAt).getTime()) / (24 * 60 * 60 * 1000)))
+    : null;
+  const overallReturnPercent = overallMaxCapitalDeployed > 0 ? (overallBase.totalPnl / overallMaxCapitalDeployed) * 100 : null;
+  let cagrPercent: number | null = null;
+  if (overallReturnPercent !== null && daysSinceStart !== null) {
+    const growthFactor = 1 + overallReturnPercent / 100;
+    // A growthFactor <= 0 means the deployed capital was wiped out entirely
+    // — there's no real annualized rate for that (the math would need to
+    // raise a non-positive number to a fractional power), so leave it null
+    // rather than show a nonsense number.
+    if (growthFactor > 0) {
+      cagrPercent = (Math.pow(growthFactor, 365 / daysSinceStart) - 1) * 100;
+    }
+  }
+
   const openPositionsUnrealizedPnl = trades
     .filter((t) => t.status === "open" && t.lots > 0)
     .reduce((sum, t) => {
@@ -181,9 +205,12 @@ export function computePerformance(trades: PaperTrade[], capitalBase: number): P
     overall: {
       ...overallBase,
       maxCapitalDeployed: overallMaxCapitalDeployed,
-      returnPercent: overallMaxCapitalDeployed > 0 ? (overallBase.totalPnl / overallMaxCapitalDeployed) * 100 : null,
+      returnPercent: overallReturnPercent,
       returnOnBasePercent: (overallBase.totalPnl / capitalBase) * 100,
       tradingDayCount: overallTradingDayCount,
+      tradingStartAt,
+      daysSinceStart,
+      cagrPercent,
     },
     openPositionsUnrealizedPnl,
     capitalBase,
