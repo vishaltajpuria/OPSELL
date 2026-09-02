@@ -253,6 +253,12 @@ export default function PaperTradePositions() {
   const knownCapital = openTrades.filter((t) => typeof t.capitalRequired === "number");
   const totalCapital = knownCapital.reduce((sum, t) => sum + (t.capitalRequired as number), 0);
   const unknownCapitalCount = openTrades.length - knownCapital.length;
+  const longCapital = knownCapital
+    .filter((t) => t.direction === "long")
+    .reduce((sum, t) => sum + (t.capitalRequired as number), 0);
+  const shortCapital = knownCapital
+    .filter((t) => t.direction === "short")
+    .reduce((sum, t) => sum + (t.capitalRequired as number), 0);
 
   // Today's P&L combines two kinds of events: the day's mark-to-market move
   // on every still-open position (todayPnl, refreshed by the Live button —
@@ -388,6 +394,16 @@ export default function PaperTradePositions() {
         <div className="mt-3 rounded-xl border border-border bg-surface p-4">
           <p className="text-xs text-muted">Total capital deployed</p>
           <p className="mt-1 text-2xl font-semibold">₹{fmt(totalCapital, 0)}</p>
+          <div className="mt-1.5 flex gap-4 text-xs">
+            <span>
+              <span className="text-muted">Long </span>
+              <span className="font-medium text-accent">₹{fmt(longCapital, 0)}</span>
+            </span>
+            <span>
+              <span className="text-muted">Short </span>
+              <span className="font-medium text-danger">₹{fmt(shortCapital, 0)}</span>
+            </span>
+          </div>
           {unknownCapitalCount > 0 && (
             <p className="mt-1 text-[10px] text-danger">
               {unknownCapitalCount} open position{unknownCapitalCount === 1 ? "" : "s"} missing a margin figure — not included above.
