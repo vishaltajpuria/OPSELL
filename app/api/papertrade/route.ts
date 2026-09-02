@@ -17,11 +17,19 @@ export async function GET() {
   try {
     const [latest, trades, capitalBase] = await Promise.all([getLatestSignals(), getPaperTrades(), getCapitalBase()]);
     const candidates = (latest?.signals ?? []).filter((s) => s.timeframe === "1D");
+    // Realized P&L to date grows (or shrinks) what's actually available to
+    // deploy — the starting ₹50L base alone understates it once you've
+    // booked real profit, same reasoning as Performance's portfolio-value
+    // view (capitalBase + realized P&L), just without also folding in
+    // still-open positions' unrealized P&L, which can still move either
+    // way before it's real.
+    const totalRealizedPnl = trades.reduce((sum, t) => sum + t.closedLots.reduce((s, lot) => s + lot.pnl, 0), 0);
+    const availableCapital = capitalBase + totalRealizedPnl;
     return NextResponse.json({
       runAt: latest?.runAt ?? null,
       candidates,
       trades: [...trades].sort((a, b) => b.entryAt.localeCompare(a.entryAt)),
-      capitalBase,
+      availableCapital,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to load paper trading data.";

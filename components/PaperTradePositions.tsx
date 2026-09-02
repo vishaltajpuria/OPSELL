@@ -94,7 +94,10 @@ type Adjustment = {
 
 export default function PaperTradePositions() {
   const [trades, setTrades] = useState<PaperTrade[]>([]);
-  const [capitalBase, setCapitalBase] = useState<number | null>(null);
+  // capitalBase grown (or shrunk) by realized P&L to date — NOT the flat
+  // ₹50L starting base, which understates what's actually available once
+  // real profit has been booked. See GET /api/papertrade.
+  const [availableCapital, setAvailableCapital] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<"idle" | "loading" | "refreshing">("loading");
   const [closingId, setClosingId] = useState<string | null>(null);
@@ -119,7 +122,7 @@ export default function PaperTradePositions() {
         throw new Error(data.error ?? "Failed to load.");
       }
       setTrades(data.trades);
-      setCapitalBase(data.capitalBase);
+      setAvailableCapital(data.availableCapital);
       setAuthExpired(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -400,10 +403,10 @@ export default function PaperTradePositions() {
         <div className="mt-3 rounded-xl border border-border bg-surface p-4">
           <p className="text-xs text-muted">
             Total capital deployed
-            {typeof capitalBase === "number" && (
-              <span className={capitalBase - totalCapital >= 0 ? "text-accent" : "text-danger"}>
+            {typeof availableCapital === "number" && (
+              <span className={availableCapital - totalCapital >= 0 ? "text-accent" : "text-danger"}>
                 {" "}
-                (₹{fmt(capitalBase - totalCapital, 0)} left to use)
+                (₹{fmt(availableCapital - totalCapital, 0)} left to use)
               </span>
             )}
           </p>
