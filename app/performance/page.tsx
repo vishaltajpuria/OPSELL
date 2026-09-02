@@ -29,7 +29,7 @@ export default async function PerformancePage() {
     error = err instanceof Error ? err.message : "Failed to load performance data.";
   }
 
-  const maxAbsCumulative = summary ? Math.max(1, ...summary.cumulativePnl.map((c) => Math.abs(c.cumulative))) : 1;
+  const maxAbsMonthlyPnl = summary ? Math.max(1, ...summary.monthly.map((m) => Math.abs(m.totalPnl))) : 1;
 
   return (
     <main className="px-4 pt-6 pb-4">
@@ -119,20 +119,20 @@ export default async function PerformancePage() {
             ))}
           </ul>
 
-          <h2 className="mt-5 text-xs font-semibold uppercase tracking-wide text-muted">Capital growth (cumulative P&L)</h2>
+          <h2 className="mt-5 text-xs font-semibold uppercase tracking-wide text-muted">Monthly P&amp;L</h2>
           <ul className="mt-2 divide-y divide-border overflow-hidden rounded-xl border border-border">
-            {summary.cumulativePnl.map((c) => {
-              const widthPct = Math.max(2, (Math.abs(c.cumulative) / maxAbsCumulative) * 100);
+            {summary.monthly.map((m) => {
+              const widthPct = Math.max(2, (Math.abs(m.totalPnl) / maxAbsMonthlyPnl) * 100);
               return (
-                <li key={c.month} className="relative bg-surface px-4 py-3">
+                <li key={m.month} className="relative bg-surface px-4 py-3">
                   <div
-                    className={`absolute inset-y-0 left-0 ${c.cumulative >= 0 ? "bg-accent/10" : "bg-danger/10"}`}
+                    className={`absolute inset-y-0 left-0 ${m.totalPnl >= 0 ? "bg-accent/10" : "bg-danger/10"}`}
                     style={{ width: `${widthPct}%` }}
                   />
                   <div className="relative flex items-center justify-between">
-                    <span className="font-medium">{monthLabel(c.month)}</span>
-                    <span className={`text-sm font-semibold ${c.cumulative >= 0 ? "text-accent" : "text-danger"}`}>
-                      ₹{signedFmt(c.cumulative)}
+                    <span className="font-medium">{monthLabel(m.month)}</span>
+                    <span className={`text-sm font-semibold ${m.totalPnl >= 0 ? "text-accent" : "text-danger"}`}>
+                      ₹{signedFmt(m.totalPnl)}
                     </span>
                   </div>
                 </li>
