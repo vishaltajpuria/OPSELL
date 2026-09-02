@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { isConnected } from "@/lib/session";
-import { getLatestSignals, getPaperTrades } from "@/lib/kv";
+import { getLatestSignals, getPaperTrades, getCapitalBase } from "@/lib/kv";
 
 export const dynamic = "force-dynamic";
 
@@ -15,12 +15,13 @@ export async function GET() {
   }
 
   try {
-    const [latest, trades] = await Promise.all([getLatestSignals(), getPaperTrades()]);
+    const [latest, trades, capitalBase] = await Promise.all([getLatestSignals(), getPaperTrades(), getCapitalBase()]);
     const candidates = (latest?.signals ?? []).filter((s) => s.timeframe === "1D");
     return NextResponse.json({
       runAt: latest?.runAt ?? null,
       candidates,
       trades: [...trades].sort((a, b) => b.entryAt.localeCompare(a.entryAt)),
+      capitalBase,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to load paper trading data.";

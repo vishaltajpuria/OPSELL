@@ -94,6 +94,7 @@ type Adjustment = {
 
 export default function PaperTradePositions() {
   const [trades, setTrades] = useState<PaperTrade[]>([]);
+  const [capitalBase, setCapitalBase] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<"idle" | "loading" | "refreshing">("loading");
   const [closingId, setClosingId] = useState<string | null>(null);
@@ -118,6 +119,7 @@ export default function PaperTradePositions() {
         throw new Error(data.error ?? "Failed to load.");
       }
       setTrades(data.trades);
+      setCapitalBase(data.capitalBase);
       setAuthExpired(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -396,7 +398,15 @@ export default function PaperTradePositions() {
 
       {openTrades.length > 0 && (
         <div className="mt-3 rounded-xl border border-border bg-surface p-4">
-          <p className="text-xs text-muted">Total capital deployed</p>
+          <p className="text-xs text-muted">
+            Total capital deployed
+            {typeof capitalBase === "number" && (
+              <span className={capitalBase - totalCapital >= 0 ? "text-accent" : "text-danger"}>
+                {" "}
+                (₹{fmt(capitalBase - totalCapital, 0)} left to use)
+              </span>
+            )}
+          </p>
           <p className="mt-1 text-2xl font-semibold">₹{fmt(totalCapital, 0)}</p>
           <div className="mt-2 flex gap-4 text-xs">
             <div className="flex-1">
