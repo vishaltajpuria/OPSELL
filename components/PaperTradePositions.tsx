@@ -253,12 +253,16 @@ export default function PaperTradePositions() {
   const knownCapital = openTrades.filter((t) => typeof t.capitalRequired === "number");
   const totalCapital = knownCapital.reduce((sum, t) => sum + (t.capitalRequired as number), 0);
   const unknownCapitalCount = openTrades.length - knownCapital.length;
-  const longCapital = knownCapital
-    .filter((t) => t.direction === "long")
-    .reduce((sum, t) => sum + (t.capitalRequired as number), 0);
-  const shortCapital = knownCapital
-    .filter((t) => t.direction === "short")
-    .reduce((sum, t) => sum + (t.capitalRequired as number), 0);
+  const capitalFor = (direction: "long" | "short", mode: "buy" | "sell") =>
+    knownCapital
+      .filter((t) => t.direction === direction && t.mode === mode)
+      .reduce((sum, t) => sum + (t.capitalRequired as number), 0);
+  const longBuyCapital = capitalFor("long", "buy");
+  const longSellCapital = capitalFor("long", "sell");
+  const shortBuyCapital = capitalFor("short", "buy");
+  const shortSellCapital = capitalFor("short", "sell");
+  const longCapital = longBuyCapital + longSellCapital;
+  const shortCapital = shortBuyCapital + shortSellCapital;
 
   // Today's P&L combines two kinds of events: the day's mark-to-market move
   // on every still-open position (todayPnl, refreshed by the Live button —
@@ -394,15 +398,21 @@ export default function PaperTradePositions() {
         <div className="mt-3 rounded-xl border border-border bg-surface p-4">
           <p className="text-xs text-muted">Total capital deployed</p>
           <p className="mt-1 text-2xl font-semibold">₹{fmt(totalCapital, 0)}</p>
-          <div className="mt-1.5 flex gap-4 text-xs">
-            <span>
+          <div className="mt-2 flex gap-4 text-xs">
+            <div className="flex-1">
               <span className="text-muted">Long </span>
               <span className="font-medium text-accent">₹{fmt(longCapital, 0)}</span>
-            </span>
-            <span>
+              <div className="mt-0.5 text-[10px] text-muted">
+                Buying ₹{fmt(longBuyCapital, 0)} · Selling ₹{fmt(longSellCapital, 0)}
+              </div>
+            </div>
+            <div className="flex-1">
               <span className="text-muted">Short </span>
               <span className="font-medium text-danger">₹{fmt(shortCapital, 0)}</span>
-            </span>
+              <div className="mt-0.5 text-[10px] text-muted">
+                Buying ₹{fmt(shortBuyCapital, 0)} · Selling ₹{fmt(shortSellCapital, 0)}
+              </div>
+            </div>
           </div>
           {unknownCapitalCount > 0 && (
             <p className="mt-1 text-[10px] text-danger">
