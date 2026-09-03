@@ -20,8 +20,8 @@ type VolumeSpikeCheck = {
 
 type WaveTrendCheck = {
   status: "confirmed" | "not_confirmed" | "pending";
-  crossDate: string | null;
-  wt2AtCross: number | null;
+  breachDate: string | null;
+  wt2AtBreach: number | null;
 };
 
 type Trade = {
@@ -267,7 +267,7 @@ function toStockCsv(result: BacktestResponse, trades: Trade[]): string {
     if (tfTrades.some((t) => t.waveTrend !== undefined)) {
       const split = summarizeByWaveTrend(tfTrades);
       lines.push(
-        `--- ${TIMEFRAME_LABEL[tf]}: WaveTrend dot confirmed vs. not ---`,
+        `--- ${TIMEFRAME_LABEL[tf]}: WaveTrend threshold confirmed vs. not ---`,
         `,Confirmed,Not confirmed`,
         `Trades (resolved),${split.confirmed.resolved},${split.notConfirmed.resolved}`,
         `Win rate %,${split.confirmed.winRate.toFixed(2)},${split.notConfirmed.winRate.toFixed(2)}`,
@@ -308,8 +308,8 @@ function toStockCsv(result: BacktestResponse, trades: Trade[]): string {
       "VolumeSpikeDate",
       "VolumeSpikeRatio",
       "WaveTrendStatus",
-      "WaveTrendCrossDate",
-      "WaveTrendWt2AtCross",
+      "WaveTrendBreachDate",
+      "WaveTrendWt2AtBreach",
     ].join(",")
   );
   for (const t of trades) {
@@ -333,10 +333,10 @@ function toStockCsv(result: BacktestResponse, trades: Trade[]): string {
           ? ""
           : t.volumeSpike.spikeRatio.toFixed(2),
         t.waveTrend?.status ?? "",
-        t.waveTrend?.crossDate ?? "",
-        t.waveTrend?.wt2AtCross === null || t.waveTrend?.wt2AtCross === undefined
+        t.waveTrend?.breachDate ?? "",
+        t.waveTrend?.wt2AtBreach === null || t.waveTrend?.wt2AtBreach === undefined
           ? ""
-          : t.waveTrend.wt2AtCross.toFixed(2),
+          : t.waveTrend.wt2AtBreach.toFixed(2),
       ]
         .map(csvEscape)
         .join(",")
@@ -538,7 +538,7 @@ function StockResultBlock({ timeframe, trades }: { timeframe: Timeframe; trades:
       {waveTrendSplit.applicable && (
         <div className="mt-3 rounded-xl border border-sky-400/40 bg-surface p-4">
           <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">
-            WaveTrend dot confirmed vs. not (±5 trading days of crossover, same-direction dot beyond ±53)
+            WaveTrend confirmed vs. not (wt2 beyond ±60 within 10 trading days either side of crossover)
           </h3>
           <div className="mt-2 grid grid-cols-3 gap-x-2 gap-y-1.5 text-sm">
             <span></span>
@@ -570,7 +570,7 @@ function StockResultBlock({ timeframe, trades }: { timeframe: Timeframe; trades:
           {waveTrendSplit.pendingCount > 0 && (
             <p className="mt-2 text-[11px] text-muted">
               {waveTrendSplit.pendingCount} trade(s) excluded — signal too close to the end of the fetched history
-              for the ±5-day window to have finished.
+              for the 10-day window to have finished.
             </p>
           )}
         </div>
@@ -654,7 +654,7 @@ function StockResultBlock({ timeframe, trades }: { timeframe: Timeframe; trades:
                 {t.waveTrend?.status === "confirmed" && (
                   <span
                     className="ml-1.5 text-[9px] font-semibold uppercase text-sky-400"
-                    title={`WaveTrend ${t.direction === "long" ? "bullish" : "bearish"} dot on ${t.waveTrend.crossDate}, wt2=${t.waveTrend.wt2AtCross?.toFixed(0)}`}
+                    title={`WaveTrend ${t.direction === "long" ? "oversold" : "overbought"} breach on ${t.waveTrend.breachDate}, wt2=${t.waveTrend.wt2AtBreach?.toFixed(0)}`}
                   >
                     WT ✓
                   </span>
