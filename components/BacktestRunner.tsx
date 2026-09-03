@@ -208,9 +208,39 @@ function toStockCsv(result: BacktestResponse, trades: Trade[]): string {
       `Exits — invalidated,${overall.exitCounts.invalidated}`,
       ""
     );
+
+    if (tfTrades.some((t) => t.volumeSpike !== undefined)) {
+      const split = summarizeByVolumeSpike(tfTrades);
+      lines.push(
+        `--- ${TIMEFRAME_LABEL[tf]}: volume-spike confirmed vs. not ---`,
+        `,Confirmed,Not confirmed`,
+        `Trades (resolved),${split.confirmed.resolved},${split.notConfirmed.resolved}`,
+        `Win rate %,${split.confirmed.winRate.toFixed(2)},${split.notConfirmed.winRate.toFixed(2)}`,
+        `Avg P&L % per trade,${split.confirmed.avgPnl.toFixed(2)},${split.notConfirmed.avgPnl.toFixed(2)}`,
+        `Total P&L % (summed),${split.confirmed.totalPnl.toFixed(2)},${split.notConfirmed.totalPnl.toFixed(2)}`,
+        `Pending (window not finished),${split.pendingCount},`,
+        ""
+      );
+    }
   }
   lines.push(
-    ["Timeframe", "Symbol", "Direction", "Label", "SignalDate", "EntryDate", "EntryPrice", "ExitDate", "ExitPrice", "ExitReason", "PnLPercent", "HoldBars"].join(",")
+    [
+      "Timeframe",
+      "Symbol",
+      "Direction",
+      "Label",
+      "SignalDate",
+      "EntryDate",
+      "EntryPrice",
+      "ExitDate",
+      "ExitPrice",
+      "ExitReason",
+      "PnLPercent",
+      "HoldBars",
+      "VolumeSpikeStatus",
+      "VolumeSpikeDate",
+      "VolumeSpikeRatio",
+    ].join(",")
   );
   for (const t of trades) {
     lines.push(
@@ -227,6 +257,11 @@ function toStockCsv(result: BacktestResponse, trades: Trade[]): string {
         t.exitReason,
         t.pnlPercent === null ? "" : t.pnlPercent.toFixed(2),
         t.holdDays === null ? "" : t.holdDays,
+        t.volumeSpike?.status ?? "",
+        t.volumeSpike?.spikeDate ?? "",
+        t.volumeSpike?.spikeRatio === null || t.volumeSpike?.spikeRatio === undefined
+          ? ""
+          : t.volumeSpike.spikeRatio.toFixed(2),
       ]
         .map(csvEscape)
         .join(",")
