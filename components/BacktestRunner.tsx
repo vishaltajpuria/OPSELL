@@ -655,11 +655,16 @@ export default function BacktestRunner() {
 
   // Pulls the same live F&O stock list the daily scan itself uses (fetched
   // fresh from Kite's instrument dump, not a hand-typed/hardcoded one that
-  // would drift out of date as NSE adds/removes F&O-eligible names) and
-  // fills the symbols box with every one of them, one per line. Doesn't
+  // would drift out of date as NSE adds/removes F&O-eligible names). Doesn't
   // include indices — this is specifically "the full stock universe";
   // NIFTY/BANKNIFTY/etc. can still be added by hand alongside it.
-  async function loadFullFnoList() {
+  //
+  // Split into two roughly-equal halves rather than one ~211-name dump: the
+  // full list alone already exceeds MAX_WORK_ITEMS for even a single
+  // timeframe, and manually trimming a 200+-line list on a phone isn't
+  // practical — half.total splits it once (evenly) rather than everyone
+  // recomputing their own midpoint.
+  async function loadFnoHalf(half: 1 | 2) {
     setUniverseStatus("loading");
     setError(null);
     try {
@@ -667,7 +672,9 @@ export default function BacktestRunner() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Failed to load the F&O stock list.");
       const names: string[] = (data.stocks ?? []).map((s: { name: string }) => s.name);
-      setSymbolsText(names.join("\n"));
+      const mid = Math.ceil(names.length / 2);
+      const slice = half === 1 ? names.slice(0, mid) : names.slice(mid);
+      setSymbolsText(slice.join("\n"));
       setUniverseStatus("idle");
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -797,19 +804,29 @@ export default function BacktestRunner() {
         rows={5}
         className="mt-3 w-full rounded-lg border border-border bg-surface2 p-3 text-sm"
       />
-      <button
-        type="button"
-        onClick={loadFullFnoList}
-        disabled={universeStatus === "loading"}
-        className="mt-2 w-full rounded-lg border border-border bg-surface2 px-3 py-2 text-xs font-medium text-muted disabled:opacity-60"
-      >
-        {universeStatus === "loading" ? "Loading full F&O stock list…" : "Load full F&O stock list"}
-      </button>
+      <div className="mt-2 flex gap-2">
+        <button
+          type="button"
+          onClick={() => loadFnoHalf(1)}
+          disabled={universeStatus === "loading"}
+          className="flex-1 rounded-lg border border-border bg-surface2 px-3 py-2 text-xs font-medium text-muted disabled:opacity-60"
+        >
+          {universeStatus === "loading" ? "Loading…" : "Load F&O list (1st half)"}
+        </button>
+        <button
+          type="button"
+          onClick={() => loadFnoHalf(2)}
+          disabled={universeStatus === "loading"}
+          className="flex-1 rounded-lg border border-border bg-surface2 px-3 py-2 text-xs font-medium text-muted disabled:opacity-60"
+        >
+          {universeStatus === "loading" ? "Loading…" : "Load F&O list (2nd half)"}
+        </button>
+      </div>
       <p className="mt-1 text-[10px] text-muted">
-        Fetches the live list (~200+ stocks) straight from Kite, same as the daily scan uses. A single run is
-        capped at {MAX_WORK_ITEMS} symbol×timeframe requests, so with the full list and Daily only selected
-        you&apos;ll need to run it in 2 batches (split the pasted list roughly in half) — Run will tell you if
-        you&apos;re over the limit.
+        Fetches the live list (~200+ stocks) straight from Kite, same as the daily scan uses, split into two
+        halves — the full list alone is already over the {MAX_WORK_ITEMS}-request run cap for even one
+        timeframe. Run each half separately (with Daily only, both halves fit comfortably under the cap) and
+        add the results together.
       </p>
 
       <div className="mt-3">
