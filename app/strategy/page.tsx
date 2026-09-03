@@ -137,6 +137,14 @@ export default async function StrategyPage() {
                                 WT ✓
                               </span>
                             )}
+                            {s.doubleWaveTrend?.status === "confirmed" && (
+                              <span
+                                className="text-[9px] font-semibold uppercase text-violet-400"
+                                title={`Double WT: a second ${s.direction === "long" ? "oversold" : "overbought"} breach on ${s.doubleWaveTrend.secondBreachDate} after an earlier one recovered, wt2=${s.doubleWaveTrend.wt2AtSecondBreach?.toFixed(0)}`}
+                              >
+                                DWT ✓
+                              </span>
+                            )}
                           </span>
                         </div>
                         <p

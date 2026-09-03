@@ -24,6 +24,12 @@ type WaveTrendCheck = {
   wt2AtBreach: number | null;
 };
 
+type DoubleWaveTrendCheck = {
+  status: "confirmed" | "not_confirmed" | "pending";
+  secondBreachDate: string | null;
+  wt2AtSecondBreach: number | null;
+};
+
 type Trade = {
   symbol: string;
   timeframe: Timeframe;
@@ -40,6 +46,7 @@ type Trade = {
   // Absent for the RSI Double Dip strategy — see lib/backtest.ts.
   volumeSpike?: VolumeSpikeCheck;
   waveTrend?: WaveTrendCheck;
+  doubleWaveTrend?: DoubleWaveTrendCheck;
 };
 
 type OptionTrade = {
@@ -155,6 +162,22 @@ function summarizeByWaveTrend(trades: Trade[]) {
   const notConfirmed = summarizeStock(withCheck.filter((t) => t.waveTrend!.status === "not_confirmed"));
   const pendingCount = trades.filter((t) => t.waveTrend?.status === "pending").length;
   return { confirmed, notConfirmed, pendingCount, applicable: trades.some((t) => t.waveTrend !== undefined) };
+}
+
+// Same shape again, for the stronger "Double WT" breach-recover-breach
+// pattern (see lib/waveTrend.ts's checkDoubleWaveTrend) — independent of
+// the single-breach WaveTrend split above.
+function summarizeByDoubleWaveTrend(trades: Trade[]) {
+  const withCheck = trades.filter((t) => t.doubleWaveTrend && t.doubleWaveTrend.status !== "pending");
+  const confirmed = summarizeStock(withCheck.filter((t) => t.doubleWaveTrend!.status === "confirmed"));
+  const notConfirmed = summarizeStock(withCheck.filter((t) => t.doubleWaveTrend!.status === "not_confirmed"));
+  const pendingCount = trades.filter((t) => t.doubleWaveTrend?.status === "pending").length;
+  return {
+    confirmed,
+    notConfirmed,
+    pendingCount,
+    applicable: trades.some((t) => t.doubleWaveTrend !== undefined),
+  };
 }
 
 // The actual "combining volume + WaveTrend makes the signal stronger"
@@ -278,6 +301,20 @@ function toStockCsv(result: BacktestResponse, trades: Trade[]): string {
       );
     }
 
+    if (tfTrades.some((t) => t.doubleWaveTrend !== undefined)) {
+      const split = summarizeByDoubleWaveTrend(tfTrades);
+      lines.push(
+        `--- ${TIMEFRAME_LABEL[tf]}: Double WT confirmed vs. not ---`,
+        `,Confirmed,Not confirmed`,
+        `Trades (resolved),${split.confirmed.resolved},${split.notConfirmed.resolved}`,
+        `Win rate %,${split.confirmed.winRate.toFixed(2)},${split.notConfirmed.winRate.toFixed(2)}`,
+        `Avg P&L % per trade,${split.confirmed.avgPnl.toFixed(2)},${split.notConfirmed.avgPnl.toFixed(2)}`,
+        `Total P&L % (summed),${split.confirmed.totalPnl.toFixed(2)},${split.notConfirmed.totalPnl.toFixed(2)}`,
+        `Pending (window not finished),${split.pendingCount},`,
+        ""
+      );
+    }
+
     const confluence = summarizeByConfluence(tfTrades);
     if (confluence.applicable) {
       lines.push(
@@ -310,6 +347,9 @@ function toStockCsv(result: BacktestResponse, trades: Trade[]): string {
       "WaveTrendStatus",
       "WaveTrendBreachDate",
       "WaveTrendWt2AtBreach",
+      "DoubleWTStatus",
+      "DoubleWTSecondBreachDate",
+      "DoubleWTWt2AtSecondBreach",
     ].join(",")
   );
   for (const t of trades) {
@@ -337,6 +377,11 @@ function toStockCsv(result: BacktestResponse, trades: Trade[]): string {
         t.waveTrend?.wt2AtBreach === null || t.waveTrend?.wt2AtBreach === undefined
           ? ""
           : t.waveTrend.wt2AtBreach.toFixed(2),
+        t.doubleWaveTrend?.status ?? "",
+        t.doubleWaveTrend?.secondBreachDate ?? "",
+        t.doubleWaveTrend?.wt2AtSecondBreach === null || t.doubleWaveTrend?.wt2AtSecondBreach === undefined
+          ? ""
+          : t.doubleWaveTrend.wt2AtSecondBreach.toFixed(2),
       ]
         .map(csvEscape)
         .join(",")
@@ -436,6 +481,7 @@ function StockResultBlock({ timeframe, trades }: { timeframe: Timeframe; trades:
   const overall = summarizeStock(trades);
   const volumeSplit = useMemo(() => summarizeByVolumeSpike(trades), [trades]);
   const waveTrendSplit = useMemo(() => summarizeByWaveTrend(trades), [trades]);
+  const doubleWaveTrendSplit = useMemo(() => summarizeByDoubleWaveTrend(trades), [trades]);
   const confluence = useMemo(() => summarizeByConfluence(trades), [trades]);
   const perStock = useMemo(() => {
     const bySymbol = new Map<string, Trade[]>();
@@ -576,6 +622,48 @@ function StockResultBlock({ timeframe, trades }: { timeframe: Timeframe; trades:
         </div>
       )}
 
+      {doubleWaveTrendSplit.applicable && (
+        <div className="mt-3 rounded-xl border border-violet-400/40 bg-surface p-4">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">
+            Double WT confirmed vs. not (breach beyond ±50, recover, breach again — within 20 days, completing
+            within 10 days of crossover)
+          </h3>
+          <div className="mt-2 grid grid-cols-3 gap-x-2 gap-y-1.5 text-sm">
+            <span></span>
+            <span className="text-right text-[11px] text-muted">Confirmed</span>
+            <span className="text-right text-[11px] text-muted">Not confirmed</span>
+
+            <span className="text-muted">Trades (resolved)</span>
+            <span className="text-right font-medium">{doubleWaveTrendSplit.confirmed.resolved}</span>
+            <span className="text-right font-medium">{doubleWaveTrendSplit.notConfirmed.resolved}</span>
+
+            <span className="text-muted">Win rate</span>
+            <span className="text-right font-medium">{fmt(doubleWaveTrendSplit.confirmed.winRate, 1)}%</span>
+            <span className="text-right font-medium">{fmt(doubleWaveTrendSplit.notConfirmed.winRate, 1)}%</span>
+
+            <span className="text-muted">Avg P&amp;L / trade</span>
+            <span
+              className={`text-right font-medium ${doubleWaveTrendSplit.confirmed.avgPnl >= 0 ? "text-accent" : "text-danger"}`}
+            >
+              {doubleWaveTrendSplit.confirmed.avgPnl >= 0 ? "+" : ""}
+              {fmt(doubleWaveTrendSplit.confirmed.avgPnl)}%
+            </span>
+            <span
+              className={`text-right font-medium ${doubleWaveTrendSplit.notConfirmed.avgPnl >= 0 ? "text-accent" : "text-danger"}`}
+            >
+              {doubleWaveTrendSplit.notConfirmed.avgPnl >= 0 ? "+" : ""}
+              {fmt(doubleWaveTrendSplit.notConfirmed.avgPnl)}%
+            </span>
+          </div>
+          {doubleWaveTrendSplit.pendingCount > 0 && (
+            <p className="mt-2 text-[11px] text-muted">
+              {doubleWaveTrendSplit.pendingCount} trade(s) excluded — signal too close to the end of the fetched
+              history for the window to have finished.
+            </p>
+          )}
+        </div>
+      )}
+
       {confluence.applicable && (
         <div className="mt-3 rounded-xl border border-border bg-surface p-4">
           <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">
@@ -657,6 +745,14 @@ function StockResultBlock({ timeframe, trades }: { timeframe: Timeframe; trades:
                     title={`WaveTrend ${t.direction === "long" ? "oversold" : "overbought"} breach on ${t.waveTrend.breachDate}, wt2=${t.waveTrend.wt2AtBreach?.toFixed(0)}`}
                   >
                     WT ✓
+                  </span>
+                )}
+                {t.doubleWaveTrend?.status === "confirmed" && (
+                  <span
+                    className="ml-1.5 text-[9px] font-semibold uppercase text-violet-400"
+                    title={`Double WT: a second ${t.direction === "long" ? "oversold" : "overbought"} breach on ${t.doubleWaveTrend.secondBreachDate} after an earlier one recovered, wt2=${t.doubleWaveTrend.wt2AtSecondBreach?.toFixed(0)}`}
+                  >
+                    DWT ✓
                   </span>
                 )}
               </span>

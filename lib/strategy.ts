@@ -1,7 +1,12 @@
 import type { Candle } from "@/lib/kite";
 import { computeSupertrend, computeSMA, toHeikinAshi } from "@/lib/indicators";
 import { checkVolumeSpike, type VolumeSpikeCheck } from "@/lib/volumeSpike";
-import { checkWaveTrendConfirmation, type WaveTrendCheck } from "@/lib/waveTrend";
+import {
+  checkWaveTrendConfirmation,
+  checkDoubleWaveTrend,
+  type WaveTrendCheck,
+  type DoubleWaveTrendCheck,
+} from "@/lib/waveTrend";
 
 const SUPERTREND_PERIOD = 14;
 const SUPERTREND_MULTIPLIER = 1;
@@ -42,6 +47,11 @@ export type StrategySignal = {
   // "both agree" read combines the two itself rather than this type
   // asserting a blended verdict.
   waveTrend: WaveTrendCheck;
+  // Breach-recover-breach WaveTrend pattern — see lib/waveTrend.ts's
+  // checkDoubleWaveTrend. Independent of waveTrend above (a single breach);
+  // a caller wanting to treat "double" as a stronger read combines the two
+  // itself rather than this type asserting a blended verdict.
+  doubleWaveTrend: DoubleWaveTrendCheck;
 };
 
 /**
@@ -181,6 +191,7 @@ export function detectSignals(
             targetSma: { period: nextPeriod, value: curTarget },
             volumeSpike: checkVolumeSpike(candles, k),
             waveTrend: checkWaveTrendConfirmation(candles, k, direction),
+            doubleWaveTrend: checkDoubleWaveTrend(candles, k, direction),
           });
         }
       }
