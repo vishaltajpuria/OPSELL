@@ -18,6 +18,12 @@ type VolumeSpikeCheck = {
   spikeRatio: number | null;
 };
 
+type WaveTrendCheck = {
+  status: "confirmed" | "not_confirmed" | "pending";
+  crossDate: string | null;
+  wt2AtCross: number | null;
+};
+
 type Trade = {
   symbol: string;
   timeframe: Timeframe;
@@ -33,6 +39,7 @@ type Trade = {
   holdDays: number | null;
   // Absent for the RSI Double Dip strategy — see lib/backtest.ts.
   volumeSpike?: VolumeSpikeCheck;
+  waveTrend?: WaveTrendCheck;
 };
 
 type OptionTrade = {
@@ -139,6 +146,40 @@ function summarizeByVolumeSpike(trades: Trade[]) {
   return { confirmed, notConfirmed, pendingCount, applicable: trades.some((t) => t.volumeSpike !== undefined) };
 }
 
+// Same shape as summarizeByVolumeSpike, for the WaveTrend/Market Cipher
+// B-style dot check (see lib/waveTrend.ts) — independent of the volume-spike
+// split above.
+function summarizeByWaveTrend(trades: Trade[]) {
+  const withCheck = trades.filter((t) => t.waveTrend && t.waveTrend.status !== "pending");
+  const confirmed = summarizeStock(withCheck.filter((t) => t.waveTrend!.status === "confirmed"));
+  const notConfirmed = summarizeStock(withCheck.filter((t) => t.waveTrend!.status === "not_confirmed"));
+  const pendingCount = trades.filter((t) => t.waveTrend?.status === "pending").length;
+  return { confirmed, notConfirmed, pendingCount, applicable: trades.some((t) => t.waveTrend !== undefined) };
+}
+
+// The actual "combining volume + WaveTrend makes the signal stronger"
+// hypothesis: four buckets by which of the two independently confirmed,
+// restricted to trades where BOTH checks have a resolved (non-pending)
+// verdict so every bucket is comparing like-for-like. If "both" doesn't
+// clearly beat "neither"/"one", stacking the two doesn't actually add up to
+// something stronger — it just looks like it should.
+function summarizeByConfluence(trades: Trade[]) {
+  const withBoth = trades.filter(
+    (t) => t.volumeSpike && t.volumeSpike.status !== "pending" && t.waveTrend && t.waveTrend.status !== "pending"
+  );
+  const bucket = (vol: boolean, wt: boolean) =>
+    summarizeStock(
+      withBoth.filter((t) => (t.volumeSpike!.status === "confirmed") === vol && (t.waveTrend!.status === "confirmed") === wt)
+    );
+  return {
+    both: bucket(true, true),
+    volOnly: bucket(true, false),
+    wtOnly: bucket(false, true),
+    neither: bucket(false, false),
+    applicable: withBoth.length > 0,
+  };
+}
+
 // Options are aggregated in ₹-per-share terms, not %, because % of a tiny
 // (near-zero) premium can blow up into meaningless numbers — a single
 // far-OTM sale that goes badly wrong can show a -20,000% "return" on its
@@ -222,6 +263,32 @@ function toStockCsv(result: BacktestResponse, trades: Trade[]): string {
         ""
       );
     }
+
+    if (tfTrades.some((t) => t.waveTrend !== undefined)) {
+      const split = summarizeByWaveTrend(tfTrades);
+      lines.push(
+        `--- ${TIMEFRAME_LABEL[tf]}: WaveTrend dot confirmed vs. not ---`,
+        `,Confirmed,Not confirmed`,
+        `Trades (resolved),${split.confirmed.resolved},${split.notConfirmed.resolved}`,
+        `Win rate %,${split.confirmed.winRate.toFixed(2)},${split.notConfirmed.winRate.toFixed(2)}`,
+        `Avg P&L % per trade,${split.confirmed.avgPnl.toFixed(2)},${split.notConfirmed.avgPnl.toFixed(2)}`,
+        `Total P&L % (summed),${split.confirmed.totalPnl.toFixed(2)},${split.notConfirmed.totalPnl.toFixed(2)}`,
+        `Pending (window not finished),${split.pendingCount},`,
+        ""
+      );
+    }
+
+    const confluence = summarizeByConfluence(tfTrades);
+    if (confluence.applicable) {
+      lines.push(
+        `--- ${TIMEFRAME_LABEL[tf]}: confluence (volume + WaveTrend) ---`,
+        `,Both,Vol only,WT only,Neither`,
+        `Trades (resolved),${confluence.both.resolved},${confluence.volOnly.resolved},${confluence.wtOnly.resolved},${confluence.neither.resolved}`,
+        `Win rate %,${confluence.both.winRate.toFixed(2)},${confluence.volOnly.winRate.toFixed(2)},${confluence.wtOnly.winRate.toFixed(2)},${confluence.neither.winRate.toFixed(2)}`,
+        `Avg P&L % per trade,${confluence.both.avgPnl.toFixed(2)},${confluence.volOnly.avgPnl.toFixed(2)},${confluence.wtOnly.avgPnl.toFixed(2)},${confluence.neither.avgPnl.toFixed(2)}`,
+        ""
+      );
+    }
   }
   lines.push(
     [
@@ -240,6 +307,9 @@ function toStockCsv(result: BacktestResponse, trades: Trade[]): string {
       "VolumeSpikeStatus",
       "VolumeSpikeDate",
       "VolumeSpikeRatio",
+      "WaveTrendStatus",
+      "WaveTrendCrossDate",
+      "WaveTrendWt2AtCross",
     ].join(",")
   );
   for (const t of trades) {
@@ -262,6 +332,11 @@ function toStockCsv(result: BacktestResponse, trades: Trade[]): string {
         t.volumeSpike?.spikeRatio === null || t.volumeSpike?.spikeRatio === undefined
           ? ""
           : t.volumeSpike.spikeRatio.toFixed(2),
+        t.waveTrend?.status ?? "",
+        t.waveTrend?.crossDate ?? "",
+        t.waveTrend?.wt2AtCross === null || t.waveTrend?.wt2AtCross === undefined
+          ? ""
+          : t.waveTrend.wt2AtCross.toFixed(2),
       ]
         .map(csvEscape)
         .join(",")
@@ -360,6 +435,8 @@ function downloadCsv(csv: string, filename: string) {
 function StockResultBlock({ timeframe, trades }: { timeframe: Timeframe; trades: Trade[] }) {
   const overall = summarizeStock(trades);
   const volumeSplit = useMemo(() => summarizeByVolumeSpike(trades), [trades]);
+  const waveTrendSplit = useMemo(() => summarizeByWaveTrend(trades), [trades]);
+  const confluence = useMemo(() => summarizeByConfluence(trades), [trades]);
   const perStock = useMemo(() => {
     const bySymbol = new Map<string, Trade[]>();
     for (const t of trades) {
@@ -458,6 +535,88 @@ function StockResultBlock({ timeframe, trades }: { timeframe: Timeframe; trades:
         </div>
       )}
 
+      {waveTrendSplit.applicable && (
+        <div className="mt-3 rounded-xl border border-sky-400/40 bg-surface p-4">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">
+            WaveTrend dot confirmed vs. not (±5 trading days of crossover, same-direction dot beyond ±53)
+          </h3>
+          <div className="mt-2 grid grid-cols-3 gap-x-2 gap-y-1.5 text-sm">
+            <span></span>
+            <span className="text-right text-[11px] text-muted">Confirmed</span>
+            <span className="text-right text-[11px] text-muted">Not confirmed</span>
+
+            <span className="text-muted">Trades (resolved)</span>
+            <span className="text-right font-medium">{waveTrendSplit.confirmed.resolved}</span>
+            <span className="text-right font-medium">{waveTrendSplit.notConfirmed.resolved}</span>
+
+            <span className="text-muted">Win rate</span>
+            <span className="text-right font-medium">{fmt(waveTrendSplit.confirmed.winRate, 1)}%</span>
+            <span className="text-right font-medium">{fmt(waveTrendSplit.notConfirmed.winRate, 1)}%</span>
+
+            <span className="text-muted">Avg P&amp;L / trade</span>
+            <span
+              className={`text-right font-medium ${waveTrendSplit.confirmed.avgPnl >= 0 ? "text-accent" : "text-danger"}`}
+            >
+              {waveTrendSplit.confirmed.avgPnl >= 0 ? "+" : ""}
+              {fmt(waveTrendSplit.confirmed.avgPnl)}%
+            </span>
+            <span
+              className={`text-right font-medium ${waveTrendSplit.notConfirmed.avgPnl >= 0 ? "text-accent" : "text-danger"}`}
+            >
+              {waveTrendSplit.notConfirmed.avgPnl >= 0 ? "+" : ""}
+              {fmt(waveTrendSplit.notConfirmed.avgPnl)}%
+            </span>
+          </div>
+          {waveTrendSplit.pendingCount > 0 && (
+            <p className="mt-2 text-[11px] text-muted">
+              {waveTrendSplit.pendingCount} trade(s) excluded — signal too close to the end of the fetched history
+              for the ±5-day window to have finished.
+            </p>
+          )}
+        </div>
+      )}
+
+      {confluence.applicable && (
+        <div className="mt-3 rounded-xl border border-border bg-surface p-4">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">
+            Confluence — does stacking volume + WaveTrend actually help?
+          </h3>
+          <div className="mt-2 overflow-x-auto">
+            <div className="grid min-w-[420px] grid-cols-5 gap-x-2 gap-y-1.5 text-sm">
+              <span></span>
+              <span className="text-right text-[11px] text-muted">Both</span>
+              <span className="text-right text-[11px] text-muted">Vol only</span>
+              <span className="text-right text-[11px] text-muted">WT only</span>
+              <span className="text-right text-[11px] text-muted">Neither</span>
+
+              <span className="text-muted">Trades</span>
+              <span className="text-right font-medium">{confluence.both.resolved}</span>
+              <span className="text-right font-medium">{confluence.volOnly.resolved}</span>
+              <span className="text-right font-medium">{confluence.wtOnly.resolved}</span>
+              <span className="text-right font-medium">{confluence.neither.resolved}</span>
+
+              <span className="text-muted">Win rate</span>
+              <span className="text-right font-medium">{fmt(confluence.both.winRate, 1)}%</span>
+              <span className="text-right font-medium">{fmt(confluence.volOnly.winRate, 1)}%</span>
+              <span className="text-right font-medium">{fmt(confluence.wtOnly.winRate, 1)}%</span>
+              <span className="text-right font-medium">{fmt(confluence.neither.winRate, 1)}%</span>
+
+              <span className="text-muted">Avg P&amp;L</span>
+              {[confluence.both, confluence.volOnly, confluence.wtOnly, confluence.neither].map((b, i) => (
+                <span key={i} className={`text-right font-medium ${b.avgPnl >= 0 ? "text-accent" : "text-danger"}`}>
+                  {b.avgPnl >= 0 ? "+" : ""}
+                  {fmt(b.avgPnl)}%
+                </span>
+              ))}
+            </div>
+          </div>
+          <p className="mt-2 text-[11px] text-muted">
+            Restricted to trades where both checks have a finished (non-pending) verdict, so every column is
+            comparing the same population.
+          </p>
+        </div>
+      )}
+
       <h3 className="mt-4 text-xs font-semibold uppercase tracking-wide text-muted">Per stock</h3>
       <ul className="mt-2 divide-y divide-border overflow-hidden rounded-xl border border-border">
         {perStock.map((s) => (
@@ -490,6 +649,14 @@ function StockResultBlock({ timeframe, trades }: { timeframe: Timeframe; trades:
                     title={`Volume spike ${t.volumeSpike.spikeRatio?.toFixed(1)}x the 30-day average on ${t.volumeSpike.spikeDate}`}
                   >
                     Vol ✓
+                  </span>
+                )}
+                {t.waveTrend?.status === "confirmed" && (
+                  <span
+                    className="ml-1.5 text-[9px] font-semibold uppercase text-sky-400"
+                    title={`WaveTrend ${t.direction === "long" ? "bullish" : "bearish"} dot on ${t.waveTrend.crossDate}, wt2=${t.waveTrend.wt2AtCross?.toFixed(0)}`}
+                  >
+                    WT ✓
                   </span>
                 )}
               </span>

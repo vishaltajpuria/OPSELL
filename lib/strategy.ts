@@ -1,6 +1,7 @@
 import type { Candle } from "@/lib/kite";
 import { computeSupertrend, computeSMA, toHeikinAshi } from "@/lib/indicators";
 import { checkVolumeSpike, type VolumeSpikeCheck } from "@/lib/volumeSpike";
+import { checkWaveTrendConfirmation, type WaveTrendCheck } from "@/lib/waveTrend";
 
 const SUPERTREND_PERIOD = 14;
 const SUPERTREND_MULTIPLIER = 1;
@@ -36,6 +37,11 @@ export type StrategySignal = {
   // so it reflects the crossover day's own volume regardless of how many
   // days have passed since.
   volumeSpike: VolumeSpikeCheck;
+  // WaveTrend/Market Cipher B-style dot confirmation — see
+  // lib/waveTrend.ts. Independent of volumeSpike above; a caller wanting a
+  // "both agree" read combines the two itself rather than this type
+  // asserting a blended verdict.
+  waveTrend: WaveTrendCheck;
 };
 
 /**
@@ -174,6 +180,7 @@ export function detectSignals(
             triggerSma: { period, value: curSma },
             targetSma: { period: nextPeriod, value: curTarget },
             volumeSpike: checkVolumeSpike(candles, k),
+            waveTrend: checkWaveTrendConfirmation(candles, k, direction),
           });
         }
       }
