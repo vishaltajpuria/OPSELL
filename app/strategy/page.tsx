@@ -37,8 +37,14 @@ function targetGapPercent(s: StoredSignal): number {
 // lib/volumeSpike.ts) within 10 trading days of firing. Amber rather than
 // accent/danger green-red so it reads as a separate axis from direction,
 // not a third color competing with long/short.
+//
+// s.volumeSpike can be missing on a signal that's still the stale output of
+// a daily-cron run from before this field existed — Redis just holds
+// whatever the last run wrote, so a currently-deployed build can render
+// data shaped by an older one until the next run overwrites it. Treated as
+// "no spike" rather than crashing the page.
 function volumeSpikeBorderClass(s: StoredSignal): string {
-  return s.volumeSpike.status === "confirmed" ? "border-amber-400/70" : "border-border";
+  return s.volumeSpike?.status === "confirmed" ? "border-amber-400/70" : "border-border";
 }
 
 export default async function StrategyPage() {
@@ -114,7 +120,7 @@ export default async function StrategyPage() {
                       >
                         <div className="flex items-center justify-between gap-1">
                           <p className="truncate text-xs font-medium">{s.symbol}</p>
-                          {s.volumeSpike.status === "confirmed" && (
+                          {s.volumeSpike?.status === "confirmed" && (
                             <span
                               className="shrink-0 text-[9px] font-semibold uppercase text-amber-400"
                               title={`Volume spike ${s.volumeSpike.spikeRatio?.toFixed(1)}x the 30-day average on ${s.volumeSpike.spikeDate}`}

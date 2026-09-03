@@ -46,7 +46,12 @@ export type StoredSignal = {
   supertrendValue: number;
   triggerSma: SmaPoint;
   targetSma: SmaPoint;
-  volumeSpike: VolumeSpikeCheck;
+  // Optional, not just newly-added: Redis holds whatever the last daily-cron
+  // run wrote, so a signal can still be the stale output of a run from
+  // before this field existed, until the next run overwrites it. Any reader
+  // must treat a missing value as "no spike data", not assume it's always
+  // present just because StrategySignal always sets it going forward.
+  volumeSpike?: VolumeSpikeCheck;
   // Nearest still-unfilled real (non-Heikin-Ashi) price gap within 20% of
   // entryPrice — see findNextGap in lib/gaps.ts. Purely informational: it
   // plays no part in which stocks make the strategy's own signal list, only
