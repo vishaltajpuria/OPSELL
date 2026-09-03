@@ -12,6 +12,12 @@ const STRATEGY_LABEL: Record<Strategy, string> = {
   rsiDip: "RSI Double Dip",
 };
 
+type VolumeSpikeCheck = {
+  status: "confirmed" | "not_confirmed" | "pending";
+  spikeDate: string | null;
+  spikeRatio: number | null;
+};
+
 type Trade = {
   symbol: string;
   timeframe: Timeframe;
@@ -25,6 +31,8 @@ type Trade = {
   exitReason: "target" | "stop_loss" | "invalidated" | "open" | "no_next_candle";
   pnlPercent: number | null;
   holdDays: number | null;
+  // Absent for the RSI Double Dip strategy — see lib/backtest.ts.
+  volumeSpike?: VolumeSpikeCheck;
 };
 
 type OptionTrade = {
@@ -115,6 +123,22 @@ function summarizeStock(trades: Trade[]) {
   };
 }
 
+// Splits resolved (win/loss) trades by whether the crossover was backed by
+// a volume spike within its own 10-trading-day window (see
+// lib/volumeSpike.ts) — the comparison that actually answers "does a
+// volume spike make this reversal signal stronger", rather than just
+// counting how many signals happened to have one. "pending" trades (the
+// 10-day window hasn't finished within the fetched history) are excluded
+// from both buckets, not lumped into "not confirmed", since they haven't
+// actually failed the check yet.
+function summarizeByVolumeSpike(trades: Trade[]) {
+  const withCheck = trades.filter((t) => t.volumeSpike && t.volumeSpike.status !== "pending");
+  const confirmed = summarizeStock(withCheck.filter((t) => t.volumeSpike!.status === "confirmed"));
+  const notConfirmed = summarizeStock(withCheck.filter((t) => t.volumeSpike!.status === "not_confirmed"));
+  const pendingCount = trades.filter((t) => t.volumeSpike?.status === "pending").length;
+  return { confirmed, notConfirmed, pendingCount, applicable: trades.some((t) => t.volumeSpike !== undefined) };
+}
+
 // Options are aggregated in ₹-per-share terms, not %, because % of a tiny
 // (near-zero) premium can blow up into meaningless numbers — a single
 // far-OTM sale that goes badly wrong can show a -20,000% "return" on its
@@ -184,9 +208,39 @@ function toStockCsv(result: BacktestResponse, trades: Trade[]): string {
       `Exits — invalidated,${overall.exitCounts.invalidated}`,
       ""
     );
+
+    if (tfTrades.some((t) => t.volumeSpike !== undefined)) {
+      const split = summarizeByVolumeSpike(tfTrades);
+      lines.push(
+        `--- ${TIMEFRAME_LABEL[tf]}: volume-spike confirmed vs. not ---`,
+        `,Confirmed,Not confirmed`,
+        `Trades (resolved),${split.confirmed.resolved},${split.notConfirmed.resolved}`,
+        `Win rate %,${split.confirmed.winRate.toFixed(2)},${split.notConfirmed.winRate.toFixed(2)}`,
+        `Avg P&L % per trade,${split.confirmed.avgPnl.toFixed(2)},${split.notConfirmed.avgPnl.toFixed(2)}`,
+        `Total P&L % (summed),${split.confirmed.totalPnl.toFixed(2)},${split.notConfirmed.totalPnl.toFixed(2)}`,
+        `Pending (window not finished),${split.pendingCount},`,
+        ""
+      );
+    }
   }
   lines.push(
-    ["Timeframe", "Symbol", "Direction", "Label", "SignalDate", "EntryDate", "EntryPrice", "ExitDate", "ExitPrice", "ExitReason", "PnLPercent", "HoldBars"].join(",")
+    [
+      "Timeframe",
+      "Symbol",
+      "Direction",
+      "Label",
+      "SignalDate",
+      "EntryDate",
+      "EntryPrice",
+      "ExitDate",
+      "ExitPrice",
+      "ExitReason",
+      "PnLPercent",
+      "HoldBars",
+      "VolumeSpikeStatus",
+      "VolumeSpikeDate",
+      "VolumeSpikeRatio",
+    ].join(",")
   );
   for (const t of trades) {
     lines.push(
@@ -203,6 +257,11 @@ function toStockCsv(result: BacktestResponse, trades: Trade[]): string {
         t.exitReason,
         t.pnlPercent === null ? "" : t.pnlPercent.toFixed(2),
         t.holdDays === null ? "" : t.holdDays,
+        t.volumeSpike?.status ?? "",
+        t.volumeSpike?.spikeDate ?? "",
+        t.volumeSpike?.spikeRatio === null || t.volumeSpike?.spikeRatio === undefined
+          ? ""
+          : t.volumeSpike.spikeRatio.toFixed(2),
       ]
         .map(csvEscape)
         .join(",")
@@ -300,6 +359,7 @@ function downloadCsv(csv: string, filename: string) {
 
 function StockResultBlock({ timeframe, trades }: { timeframe: Timeframe; trades: Trade[] }) {
   const overall = summarizeStock(trades);
+  const volumeSplit = useMemo(() => summarizeByVolumeSpike(trades), [trades]);
   const perStock = useMemo(() => {
     const bySymbol = new Map<string, Trade[]>();
     for (const t of trades) {
@@ -357,6 +417,47 @@ function StockResultBlock({ timeframe, trades }: { timeframe: Timeframe; trades:
         </div>
       </div>
 
+      {volumeSplit.applicable && (
+        <div className="mt-3 rounded-xl border border-amber-400/40 bg-surface p-4">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">
+            Volume-spike confirmed vs. not (10 trading days after crossover, ≥50% over 30-day avg)
+          </h3>
+          <div className="mt-2 grid grid-cols-3 gap-x-2 gap-y-1.5 text-sm">
+            <span></span>
+            <span className="text-right text-[11px] text-muted">Confirmed</span>
+            <span className="text-right text-[11px] text-muted">Not confirmed</span>
+
+            <span className="text-muted">Trades (resolved)</span>
+            <span className="text-right font-medium">{volumeSplit.confirmed.resolved}</span>
+            <span className="text-right font-medium">{volumeSplit.notConfirmed.resolved}</span>
+
+            <span className="text-muted">Win rate</span>
+            <span className="text-right font-medium">{fmt(volumeSplit.confirmed.winRate, 1)}%</span>
+            <span className="text-right font-medium">{fmt(volumeSplit.notConfirmed.winRate, 1)}%</span>
+
+            <span className="text-muted">Avg P&amp;L / trade</span>
+            <span
+              className={`text-right font-medium ${volumeSplit.confirmed.avgPnl >= 0 ? "text-accent" : "text-danger"}`}
+            >
+              {volumeSplit.confirmed.avgPnl >= 0 ? "+" : ""}
+              {fmt(volumeSplit.confirmed.avgPnl)}%
+            </span>
+            <span
+              className={`text-right font-medium ${volumeSplit.notConfirmed.avgPnl >= 0 ? "text-accent" : "text-danger"}`}
+            >
+              {volumeSplit.notConfirmed.avgPnl >= 0 ? "+" : ""}
+              {fmt(volumeSplit.notConfirmed.avgPnl)}%
+            </span>
+          </div>
+          {volumeSplit.pendingCount > 0 && (
+            <p className="mt-2 text-[11px] text-muted">
+              {volumeSplit.pendingCount} trade(s) excluded — signal too close to the end of the fetched history for
+              the 10-day window to have finished.
+            </p>
+          )}
+        </div>
+      )}
+
       <h3 className="mt-4 text-xs font-semibold uppercase tracking-wide text-muted">Per stock</h3>
       <ul className="mt-2 divide-y divide-border overflow-hidden rounded-xl border border-border">
         {perStock.map((s) => (
@@ -383,6 +484,14 @@ function StockResultBlock({ timeframe, trades }: { timeframe: Timeframe; trades:
             <div className="flex items-center justify-between">
               <span className="font-medium">
                 {t.symbol} <span className="text-[10px] font-normal text-muted">{t.label}</span>
+                {t.volumeSpike?.status === "confirmed" && (
+                  <span
+                    className="ml-1.5 text-[9px] font-semibold uppercase text-amber-400"
+                    title={`Volume spike ${t.volumeSpike.spikeRatio?.toFixed(1)}x the 30-day average on ${t.volumeSpike.spikeDate}`}
+                  >
+                    Vol ✓
+                  </span>
+                )}
               </span>
               <span
                 className={`text-sm font-semibold ${

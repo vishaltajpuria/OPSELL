@@ -1,5 +1,6 @@
 import type { Candle } from "@/lib/kite";
 import { computeSupertrend, computeSMA, toHeikinAshi } from "@/lib/indicators";
+import { checkVolumeSpike, type VolumeSpikeCheck } from "@/lib/volumeSpike";
 
 const SUPERTREND_PERIOD = 14;
 const SUPERTREND_MULTIPLIER = 1;
@@ -30,6 +31,11 @@ export type StrategySignal = {
   supertrendValue: number;
   triggerSma: SmaPoint;
   targetSma: SmaPoint;
+  // Own-history volume-spike confirmation — see lib/volumeSpike.ts. Checked
+  // against the real candles, not entryPrice/supertrendValue/the SMAs above,
+  // so it reflects the crossover day's own volume regardless of how many
+  // days have passed since.
+  volumeSpike: VolumeSpikeCheck;
 };
 
 /**
@@ -167,6 +173,7 @@ export function detectSignals(
             supertrendValue: supertrend[i].value,
             triggerSma: { period, value: curSma },
             targetSma: { period: nextPeriod, value: curTarget },
+            volumeSpike: checkVolumeSpike(candles, k),
           });
         }
       }

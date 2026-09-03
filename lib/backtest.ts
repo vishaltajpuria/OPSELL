@@ -1,5 +1,6 @@
 import type { Candle } from "@/lib/kite";
 import { toHeikinAshi, computeSupertrend, computeSMA } from "@/lib/indicators";
+import { checkVolumeSpike, type VolumeSpikeCheck } from "@/lib/volumeSpike";
 
 const SUPERTREND_PERIOD = 14;
 const SUPERTREND_MULTIPLIER = 1;
@@ -28,6 +29,14 @@ export type BacktestTrade = {
   exitReason: "target" | "stop_loss" | "invalidated" | "open" | "no_next_candle";
   pnlPercent: number | null;
   holdDays: number | null;
+  // Own-history volume-spike confirmation on the signal day — see
+  // lib/volumeSpike.ts. Populated by backtestSymbol (the SMA/Supertrend
+  // reversal strategy this was built for); left undefined by
+  // backtestRsiDip, a different strategy this check was never asked to
+  // cover. Otherwise always fully resolved here (never "pending") except
+  // for a signal within SPIKE_WINDOW_DAYS of the end of the fetched candle
+  // history, where the 10-day window hasn't played out in the data yet.
+  volumeSpike?: VolumeSpikeCheck;
 };
 
 export type BacktestOptions = {
@@ -170,6 +179,7 @@ export function backtestSymbol(symbol: string, candles: Candle[], options: Backt
           exitReason: "no_next_candle",
           pnlPercent: null,
           holdDays: null,
+          volumeSpike: checkVolumeSpike(candles, i),
         });
         break;
       }
@@ -249,6 +259,7 @@ export function backtestSymbol(symbol: string, candles: Candle[], options: Backt
         exitReason,
         pnlPercent,
         holdDays,
+        volumeSpike: checkVolumeSpike(candles, i),
       });
 
       break; // one entry per signal day, even if multiple SMA rungs qualify
