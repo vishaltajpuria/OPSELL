@@ -538,7 +538,7 @@ function StockResultBlock({ timeframe, trades }: { timeframe: Timeframe; trades:
       {waveTrendSplit.applicable && (
         <div className="mt-3 rounded-xl border border-sky-400/40 bg-surface p-4">
           <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">
-            WaveTrend confirmed vs. not (wt2 beyond ±60 within 10 trading days either side of crossover)
+            WaveTrend confirmed vs. not (wt2 beyond ±50 within 10 trading days either side of crossover)
           </h3>
           <div className="mt-2 grid grid-cols-3 gap-x-2 gap-y-1.5 text-sm">
             <span></span>

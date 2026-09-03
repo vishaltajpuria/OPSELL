@@ -36,8 +36,8 @@ export function computeWaveTrend(
 // wt2 (the slower line) breaching this level is the whole signal — no wt1
 // crossover required, just reaching this deep into oversold/overbought
 // territory at all.
-const OVERSOLD = -60;
-const OVERBOUGHT = 60;
+const OVERSOLD = -50;
+const OVERBOUGHT = 50;
 // How many trading days either side of the Supertrend/SMA crossover a
 // breach still counts as confirming it — it can happen before OR after,
 // unlike the volume-spike check's trailing-only window (see
