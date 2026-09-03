@@ -2,7 +2,7 @@ import { Redis } from "@upstash/redis";
 import type { SmaPoint } from "@/lib/strategy";
 import type { GapInfo } from "@/lib/gaps";
 import type { VolumeSpikeCheck } from "@/lib/volumeSpike";
-import type { WaveTrendCheck } from "@/lib/waveTrend";
+import type { WaveTrendCheck, DoubleWaveTrendCheck } from "@/lib/waveTrend";
 
 let client: Redis | null = null;
 
@@ -56,6 +56,8 @@ export type StoredSignal = {
   // Same staleness caveat as volumeSpike above — optional, not just
   // newly-added.
   waveTrend?: WaveTrendCheck;
+  // Same staleness caveat as volumeSpike/waveTrend above.
+  doubleWaveTrend?: DoubleWaveTrendCheck;
   // Nearest still-unfilled real (non-Heikin-Ashi) price gap within 20% of
   // entryPrice — see findNextGap in lib/gaps.ts. Purely informational: it
   // plays no part in which stocks make the strategy's own signal list, only

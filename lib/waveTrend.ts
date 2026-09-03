@@ -102,3 +102,84 @@ export function checkWaveTrendConfirmation(
   const windowComplete = signalIndex + MATCH_WINDOW_DAYS < candles.length;
   return { status: windowComplete ? "not_confirmed" : "pending", breachDate: null, wt2AtBreach: null };
 }
+
+// How far back a "Double WT" pattern is allowed to reach for its first
+// breach, counted from the day of its second (confirming) breach — not from
+// the Supertrend/SMA crossover day. Separate from MATCH_WINDOW_DAYS above,
+// which is how far the whole pattern's completion day can sit from the
+// crossover.
+const DOUBLE_LOOKBACK_DAYS = 20;
+
+export type DoubleWaveTrendCheck = {
+  status: "confirmed" | "not_confirmed" | "pending";
+  secondBreachDate: string | null;
+  wt2AtSecondBreach: number | null;
+};
+
+/**
+ * Finds a same-direction "Double WT" pattern completing at or before asOf,
+ * within the DOUBLE_LOOKBACK_DAYS trading days ending there: wt2 breaches
+ * the threshold, recovers back inside the band, then breaches again — the
+ * oscillator equivalent of a double bottom/top. Multiple breach days in a
+ * row without an intervening recovery count as ONE excursion, not a
+ * double — only a breach that happens after wt2 has actually come back
+ * inside the band counts as the confirming second breach. Returns the
+ * index of that second breach (the earliest one found scanning forward
+ * from fromIndex), or null.
+ *
+ * Exported standalone from checkDoubleWaveTrend so the pattern logic
+ * itself can be unit-tested against a hand-built wt2 array, same reasoning
+ * as findThresholdBreachIndex above.
+ */
+export function findDoubleBreachIndex(
+  wt2: number[],
+  asOf: number,
+  lookbackDays: number,
+  direction: "short" | "long"
+): number | null {
+  const breached = (v: number) => (direction === "long" ? v <= OVERSOLD : v >= OVERBOUGHT);
+  const from = Math.max(0, asOf - lookbackDays);
+  let sawFirstBreach = false;
+  let recoveredSince = false;
+  for (let i = from; i <= asOf; i++) {
+    const v = wt2[i];
+    if (Number.isNaN(v)) continue;
+    if (breached(v)) {
+      if (sawFirstBreach && recoveredSince) return i;
+      sawFirstBreach = true;
+      recoveredSince = false;
+    } else if (sawFirstBreach) {
+      recoveredSince = true;
+    }
+  }
+  return null;
+}
+
+/**
+ * Checks whether a Double WT pattern (see findDoubleBreachIndex) completed
+ * on any day within MATCH_WINDOW_DAYS trading days either side of the
+ * Supertrend/SMA crossover at signalIndex — same outer window and same
+ * status vocabulary as checkWaveTrendConfirmation, just requiring the
+ * stronger breach-recover-breach pattern instead of a single breach.
+ *
+ * candles must be the same array (or a longer one) that produced the
+ * signal, indexed the same way — i.e. candles[signalIndex] is the
+ * crossover's own candle.
+ */
+export function checkDoubleWaveTrend(
+  candles: Candle[],
+  signalIndex: number,
+  direction: "short" | "long"
+): DoubleWaveTrendCheck {
+  const { wt2 } = computeWaveTrend(candles);
+  const matchFrom = Math.max(0, signalIndex - MATCH_WINDOW_DAYS);
+  const matchTo = Math.min(candles.length - 1, signalIndex + MATCH_WINDOW_DAYS);
+  for (let asOf = matchFrom; asOf <= matchTo; asOf++) {
+    const idx = findDoubleBreachIndex(wt2, asOf, DOUBLE_LOOKBACK_DAYS, direction);
+    if (idx !== null) {
+      return { status: "confirmed", secondBreachDate: candles[idx].date, wt2AtSecondBreach: wt2[idx] };
+    }
+  }
+  const windowComplete = signalIndex + MATCH_WINDOW_DAYS < candles.length;
+  return { status: windowComplete ? "not_confirmed" : "pending", secondBreachDate: null, wt2AtSecondBreach: null };
+}
