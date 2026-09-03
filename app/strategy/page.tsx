@@ -132,7 +132,7 @@ export default async function StrategyPage() {
                             {s.waveTrend?.status === "confirmed" && (
                               <span
                                 className="text-[9px] font-semibold uppercase text-sky-400"
-                                title={`WaveTrend ${s.direction === "long" ? "bullish" : "bearish"} dot on ${s.waveTrend.crossDate}, wt2=${s.waveTrend.wt2AtCross?.toFixed(0)}`}
+                                title={`WaveTrend ${s.direction === "long" ? "oversold" : "overbought"} breach on ${s.waveTrend.breachDate}, wt2=${s.waveTrend.wt2AtBreach?.toFixed(0)}`}
                               >
                                 WT ✓
                               </span>
