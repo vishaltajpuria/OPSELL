@@ -32,6 +32,15 @@ function targetGapPercent(s: StoredSignal): number {
   return (Math.abs(s.targetSma.value - s.entryPrice) / s.entryPrice) * 100;
 }
 
+// Amber border/badge marks a signal whose crossover was backed by a real
+// volume spike (own 30-day history, not just today vs. other stocks — see
+// lib/volumeSpike.ts) within 10 trading days of firing. Amber rather than
+// accent/danger green-red so it reads as a separate axis from direction,
+// not a third color competing with long/short.
+function volumeSpikeBorderClass(s: StoredSignal): string {
+  return s.volumeSpike.status === "confirmed" ? "border-amber-400/70" : "border-border";
+}
+
 export default async function StrategyPage() {
   if (!isConnected()) redirect("/settings");
 
@@ -99,8 +108,21 @@ export default async function StrategyPage() {
                   <ul className="mt-2 space-y-2">
                     {rows.length === 0 && <li className="text-xs text-muted">No signals</li>}
                     {rows.map((s, i) => (
-                      <li key={`${s.symbol}-${s.timeframe}-${i}`} className="rounded-lg border border-border bg-surface p-2.5">
-                        <p className="truncate text-xs font-medium">{s.symbol}</p>
+                      <li
+                        key={`${s.symbol}-${s.timeframe}-${i}`}
+                        className={`rounded-lg border bg-surface p-2.5 ${volumeSpikeBorderClass(s)}`}
+                      >
+                        <div className="flex items-center justify-between gap-1">
+                          <p className="truncate text-xs font-medium">{s.symbol}</p>
+                          {s.volumeSpike.status === "confirmed" && (
+                            <span
+                              className="shrink-0 text-[9px] font-semibold uppercase text-amber-400"
+                              title={`Volume spike ${s.volumeSpike.spikeRatio?.toFixed(1)}x the 30-day average on ${s.volumeSpike.spikeDate}`}
+                            >
+                              Vol ✓
+                            </span>
+                          )}
+                        </div>
                         <p
                           className={`text-[10px] font-semibold uppercase ${
                             s.direction === "short" ? "text-danger" : "text-accent"
