@@ -637,6 +637,7 @@ export default function BacktestRunner() {
   const [status, setStatus] = useState<"idle" | "running" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<BacktestResponse | null>(null);
+  const [universeStatus, setUniverseStatus] = useState<"idle" | "loading" | "error">("idle");
 
   const stockGroups = useMemo(
     () => (result && !result.sellOptions ? groupByTimeframe(result.trades as Trade[]) : []),
@@ -651,6 +652,28 @@ export default function BacktestRunner() {
   // single run under Vercel's 60s cap. Selecting more timeframes multiplies
   // the request count, so the safe symbol count shrinks accordingly.
   const MAX_WORK_ITEMS = 150;
+
+  // Pulls the same live F&O stock list the daily scan itself uses (fetched
+  // fresh from Kite's instrument dump, not a hand-typed/hardcoded one that
+  // would drift out of date as NSE adds/removes F&O-eligible names) and
+  // fills the symbols box with every one of them, one per line. Doesn't
+  // include indices — this is specifically "the full stock universe";
+  // NIFTY/BANKNIFTY/etc. can still be added by hand alongside it.
+  async function loadFullFnoList() {
+    setUniverseStatus("loading");
+    setError(null);
+    try {
+      const res = await fetch("/api/instruments");
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to load the F&O stock list.");
+      const names: string[] = (data.stocks ?? []).map((s: { name: string }) => s.name);
+      setSymbolsText(names.join("\n"));
+      setUniverseStatus("idle");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setUniverseStatus("error");
+    }
+  }
 
   function toggleTimeframe(tf: Timeframe) {
     setTimeframes((prev) => {
@@ -774,6 +797,20 @@ export default function BacktestRunner() {
         rows={5}
         className="mt-3 w-full rounded-lg border border-border bg-surface2 p-3 text-sm"
       />
+      <button
+        type="button"
+        onClick={loadFullFnoList}
+        disabled={universeStatus === "loading"}
+        className="mt-2 w-full rounded-lg border border-border bg-surface2 px-3 py-2 text-xs font-medium text-muted disabled:opacity-60"
+      >
+        {universeStatus === "loading" ? "Loading full F&O stock list…" : "Load full F&O stock list"}
+      </button>
+      <p className="mt-1 text-[10px] text-muted">
+        Fetches the live list (~200+ stocks) straight from Kite, same as the daily scan uses. A single run is
+        capped at {MAX_WORK_ITEMS} symbol×timeframe requests, so with the full list and Daily only selected
+        you&apos;ll need to run it in 2 batches (split the pasted list roughly in half) — Run will tell you if
+        you&apos;re over the limit.
+      </p>
 
       <div className="mt-3">
         <span className="block text-xs text-muted">Timeframe (tap to select more than one)</span>
