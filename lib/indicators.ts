@@ -107,6 +107,33 @@ export function computeSMA(candles: Candle[], period: number): number[] {
   return smaSeries(candles.map((c) => c.close), period);
 }
 
+// Standard exponential moving average (alpha = 2/(period+1), NOT Wilder's
+// 1/period smoothing used by computeRMA below) — tolerant of a leading NaN
+// gap the same way smaSeries is, seeded off the first `period` non-NaN
+// values wherever they start.
+export function emaSeries(values: number[], period: number): number[] {
+  const result: number[] = new Array(values.length).fill(NaN);
+  const alpha = 2 / (period + 1);
+  let seedSum = 0;
+  let seedCount = 0;
+  let seeded = false;
+  for (let i = 0; i < values.length; i++) {
+    const v = values[i];
+    if (Number.isNaN(v)) continue;
+    if (!seeded) {
+      seedSum += v;
+      seedCount++;
+      if (seedCount === period) {
+        result[i] = seedSum / period;
+        seeded = true;
+      }
+    } else {
+      result[i] = v * alpha + result[i - 1] * (1 - alpha);
+    }
+  }
+  return result;
+}
+
 // Wilder's smoothed moving average (same recursion as computeATR, generalized
 // to any series) — tolerant of a leading NaN (e.g. index 0 of a
 // bar-to-bar change series, which has no previous bar to diff against): the

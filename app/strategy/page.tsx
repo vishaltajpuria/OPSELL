@@ -120,14 +120,24 @@ export default async function StrategyPage() {
                       >
                         <div className="flex items-center justify-between gap-1">
                           <p className="truncate text-xs font-medium">{s.symbol}</p>
-                          {s.volumeSpike?.status === "confirmed" && (
-                            <span
-                              className="shrink-0 text-[9px] font-semibold uppercase text-amber-400"
-                              title={`Volume spike ${s.volumeSpike.spikeRatio?.toFixed(1)}x the 30-day average on ${s.volumeSpike.spikeDate}`}
-                            >
-                              Vol ✓
-                            </span>
-                          )}
+                          <span className="flex shrink-0 gap-1">
+                            {s.volumeSpike?.status === "confirmed" && (
+                              <span
+                                className="text-[9px] font-semibold uppercase text-amber-400"
+                                title={`Volume spike ${s.volumeSpike.spikeRatio?.toFixed(1)}x the 30-day average on ${s.volumeSpike.spikeDate}`}
+                              >
+                                Vol ✓
+                              </span>
+                            )}
+                            {s.waveTrend?.status === "confirmed" && (
+                              <span
+                                className="text-[9px] font-semibold uppercase text-sky-400"
+                                title={`WaveTrend ${s.direction === "long" ? "bullish" : "bearish"} dot on ${s.waveTrend.crossDate}, wt2=${s.waveTrend.wt2AtCross?.toFixed(0)}`}
+                              >
+                                WT ✓
+                              </span>
+                            )}
+                          </span>
                         </div>
                         <p
                           className={`text-[10px] font-semibold uppercase ${

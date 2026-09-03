@@ -1,6 +1,7 @@
 import type { Candle } from "@/lib/kite";
 import { toHeikinAshi, computeSupertrend, computeSMA } from "@/lib/indicators";
 import { checkVolumeSpike, type VolumeSpikeCheck } from "@/lib/volumeSpike";
+import { checkWaveTrendConfirmation, type WaveTrendCheck } from "@/lib/waveTrend";
 
 const SUPERTREND_PERIOD = 14;
 const SUPERTREND_MULTIPLIER = 1;
@@ -37,6 +38,9 @@ export type BacktestTrade = {
   // for a signal within SPIKE_WINDOW_DAYS of the end of the fetched candle
   // history, where the 10-day window hasn't played out in the data yet.
   volumeSpike?: VolumeSpikeCheck;
+  // WaveTrend/Market Cipher B-style dot confirmation — see lib/waveTrend.ts.
+  // Same populated-by-backtestSymbol-only caveat as volumeSpike above.
+  waveTrend?: WaveTrendCheck;
 };
 
 export type BacktestOptions = {
@@ -180,6 +184,7 @@ export function backtestSymbol(symbol: string, candles: Candle[], options: Backt
           pnlPercent: null,
           holdDays: null,
           volumeSpike: checkVolumeSpike(candles, i),
+          waveTrend: checkWaveTrendConfirmation(candles, i, direction),
         });
         break;
       }
@@ -260,6 +265,7 @@ export function backtestSymbol(symbol: string, candles: Candle[], options: Backt
         pnlPercent,
         holdDays,
         volumeSpike: checkVolumeSpike(candles, i),
+        waveTrend: checkWaveTrendConfirmation(candles, i, direction),
       });
 
       break; // one entry per signal day, even if multiple SMA rungs qualify
