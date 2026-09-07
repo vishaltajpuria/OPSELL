@@ -4,6 +4,7 @@ import { requireAccessToken, KiteAuthError } from "@/lib/kite";
 import { batchQuote } from "@/lib/quoteBatch";
 import { tradeQuoteKeys, markToMarket, weightedAveragePremium, computeMarginForQuantity, computeTodayPnl } from "@/lib/paperTrading";
 import { getPaperTrades, savePaperTrades } from "@/lib/kv";
+import { getMarketStatus, marketClosedMessage } from "@/lib/marketHours";
 
 // Adds lots to an already-open position, at its EXISTING strike(s) — never
 // resolves a fresh strike, since the whole point is averaging into the same
@@ -20,6 +21,10 @@ import { getPaperTrades, savePaperTrades } from "@/lib/kv";
 export async function POST(request: NextRequest) {
   if (!isConnected()) {
     return NextResponse.json({ error: "Not connected to Zerodha." }, { status: 401 });
+  }
+  const marketStatus = getMarketStatus();
+  if (!marketStatus.open) {
+    return NextResponse.json({ error: marketClosedMessage(marketStatus) }, { status: 403 });
   }
 
   const body = await request.json().catch(() => null);

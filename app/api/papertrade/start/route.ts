@@ -4,6 +4,7 @@ import { isConnected } from "@/lib/session";
 import { requireAccessToken, KiteAuthError } from "@/lib/kite";
 import { buildTradePlan, computeCapitalRequired, findOpenTrade } from "@/lib/paperTrading";
 import { getPaperTrades, savePaperTrades, type PaperTrade } from "@/lib/kv";
+import { getMarketStatus, marketClosedMessage } from "@/lib/marketHours";
 
 // Opens a brand-new paper trade. Re-resolves the trade plan fresh (same as
 // /preview) rather than trusting anything the client sends beyond
@@ -26,6 +27,10 @@ import { getPaperTrades, savePaperTrades, type PaperTrade } from "@/lib/kv";
 export async function POST(request: NextRequest) {
   if (!isConnected()) {
     return NextResponse.json({ error: "Not connected to Zerodha." }, { status: 401 });
+  }
+  const marketStatus = getMarketStatus();
+  if (!marketStatus.open) {
+    return NextResponse.json({ error: marketClosedMessage(marketStatus) }, { status: 403 });
   }
 
   const body = await request.json().catch(() => null);

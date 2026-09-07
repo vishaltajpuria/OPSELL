@@ -4,6 +4,7 @@ import { requireAccessToken, KiteAuthError } from "@/lib/kite";
 import { batchQuote } from "@/lib/quoteBatch";
 import { tradeQuoteKeys, markToMarket, computePartialClose, computeTodayPnl } from "@/lib/paperTrading";
 import { getPaperTrades, savePaperTrades, type ClosedLot } from "@/lib/kv";
+import { getMarketStatus, marketClosedMessage } from "@/lib/marketHours";
 
 // Closes a position, in full (omit lots) or in part (pass lots < what's
 // open) — either way records one ClosedLot event and, if any lots remain
@@ -13,6 +14,10 @@ import { getPaperTrades, savePaperTrades, type ClosedLot } from "@/lib/kv";
 export async function POST(request: NextRequest) {
   if (!isConnected()) {
     return NextResponse.json({ error: "Not connected to Zerodha." }, { status: 401 });
+  }
+  const marketStatus = getMarketStatus();
+  if (!marketStatus.open) {
+    return NextResponse.json({ error: marketClosedMessage(marketStatus) }, { status: 403 });
   }
 
   const body = await request.json().catch(() => null);
