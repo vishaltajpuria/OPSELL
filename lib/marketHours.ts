@@ -7,23 +7,42 @@ const MARKET_OPEN_MINUTES = 9 * 60 + 15; // 9:15
 const MARKET_CLOSE_MINUTES = 15 * 60 + 40; // 15:40
 
 /**
- * NSE-observed trading holidays, IST calendar dates (YYYY-MM-DD). Only the
- * THREE fixed national holidays are filled in below — Republic Day,
- * Independence Day, and Gandhi Jayanti never move, so they're safe to
- * hardcode. Every other NSE holiday (Holi, Good Friday, Ram Navami, Eid,
- * Buddha Purnima, Muharram, Ganesh Chaturthi, Dussehra, Diwali/Balipratipada,
- * Guru Nanak Jayanti, Christmas, and any one-off closure) is a movable date
- * set by NSE's own annual circular (published every December for the
- * following year) — deliberately left OUT rather than guessed, since a
- * wrong hardcoded date is worse than a missing one. Update this list from
- * NSE's official holiday calendar (nseindia.com, or the list inside the
- * Kite/Console app) at the start of each year.
+ * NSE-observed trading holidays, IST calendar dates (YYYY-MM-DD). 2026
+ * sourced directly from NSE's official published holiday calendar
+ * (nseindia.com) — not hardcoded from assumption. A date already falling on
+ * a weekend (e.g. Independence Day 2026, a Saturday) isn't separately
+ * listed by NSE and doesn't need to be here either, since getMarketStatus
+ * already checks weekday first.
+ *
+ * November 9, 2026 (Diwali Laxmi Pujan) is a full-day trading holiday too,
+ * distinct from the Balipratipada holiday on Nov 10 below — NSE runs a
+ * separate, symbolic one-hour "Muhurat Trading" session that evening,
+ * outside MARKET_OPEN_MINUTES/MARKET_CLOSE_MINUTES above; this module
+ * doesn't special-case that session, so paper trading stays blocked all day
+ * Nov 9 including during Muhurat trading.
+ *
+ * Update this list from NSE's official holiday calendar at the start of
+ * each year (nseindia.com → Holidays, or the equivalent list in Kite/Console).
  */
 export const NSE_HOLIDAYS: Record<string, string[]> = {
   "2026": [
+    "2026-01-15", // Corporation Election (Maharashtra)
     "2026-01-26", // Republic Day
-    "2026-08-15", // Independence Day
-    "2026-10-02", // Gandhi Jayanti
+    "2026-03-03", // Holi
+    "2026-03-26", // Shri Ram Navami
+    "2026-03-31", // Shri Mahavir Jayanti
+    "2026-04-03", // Good Friday
+    "2026-04-14", // Dr. Baba Saheb Ambedkar Jayanti
+    "2026-05-01", // Maharashtra Day
+    "2026-05-28", // Bakri Id
+    "2026-06-26", // Muharram
+    "2026-09-14", // Ganesh Chaturthi
+    "2026-10-02", // Mahatma Gandhi Jayanti
+    "2026-10-20", // Dussehra
+    "2026-11-09", // Diwali Laxmi Pujan (Muhurat Trading evening session, still a holiday for normal hours)
+    "2026-11-10", // Diwali Balipratipada
+    "2026-11-24", // Prakash Gurpurb Sri Guru Nanak Dev
+    "2026-12-25", // Christmas
   ],
 };
 
