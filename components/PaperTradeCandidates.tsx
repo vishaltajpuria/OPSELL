@@ -93,6 +93,14 @@ type Preview = {
   chainRows: ChainPickerRow[] | null;
   chainStatus: "idle" | "loading" | "error";
   chainError: string | null;
+  // Manual expiry picker — lets the user see and pick from EVERY real
+  // expiry the symbol has, rather than trusting the auto-picker's
+  // near/next-month rollover or the monthly/weekly toggle below (which is
+  // NIFTY-only). See resolveManualExpiry in lib/paperTrading.ts.
+  showExpiryPicker: boolean;
+  expiryOptions: string[] | null;
+  expiryStatus: "idle" | "loading" | "error";
+  expiryError: string | null;
 };
 
 // A strike's live spread as a % of its mid — flagged in the picker so a
@@ -183,7 +191,20 @@ export default function PaperTradeCandidates({
   const sorted = [...candidates].sort((a, b) => targetGapPercent(b) - targetGapPercent(a));
 
   async function openPreview(symbol: string, direction: "short" | "long", mode: "buy" | "sell") {
-    const base = { symbol, direction, mode, lotsText: "1", showPicker: false, chainRows: null, chainStatus: "idle" as const, chainError: null };
+    const base = {
+      symbol,
+      direction,
+      mode,
+      lotsText: "1",
+      showPicker: false,
+      chainRows: null,
+      chainStatus: "idle" as const,
+      chainError: null,
+      showExpiryPicker: false,
+      expiryOptions: null,
+      expiryStatus: "idle" as const,
+      expiryError: null,
+    };
     setPreview({ ...base, status: "loading", plan: null, error: null });
     try {
       const res = await fetch("/api/papertrade/preview", {
@@ -259,7 +280,49 @@ export default function PaperTradeCandidates({
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Failed to price the weekly expiry.");
-      setPreview((p) => (p ? { ...p, status: "ready", plan: data, error: null, showPicker: false, chainRows: null } : p));
+      setPreview((p) =>
+        p ? { ...p, status: "ready", plan: data, error: null, showPicker: false, chainRows: null, showExpiryPicker: false } : p
+      );
+    } catch (err) {
+      setPreview((p) => (p ? { ...p, status: "error", error: err instanceof Error ? err.message : String(err) } : p));
+    }
+  }
+
+  // Loads every real expiry the symbol has, for the "choose expiry myself"
+  // picker — the fix for the auto-picker's near/next-month rollover (see
+  // resolveManualExpiry in lib/paperTrading.ts) silently landing on a
+  // pricier contract than the one shown by default on a broker screen.
+  async function openExpiryPicker() {
+    if (!preview || !preview.plan || preview.plan.isIncrease) return;
+    setPreview({ ...preview, showExpiryPicker: true, expiryStatus: "loading", expiryError: null });
+    try {
+      const res = await fetch(`/api/papertrade/expiries?symbol=${encodeURIComponent(preview.symbol)}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to load expiries.");
+      setPreview((p) => (p ? { ...p, expiryOptions: data.expiries, expiryStatus: "idle", expiryError: null } : p));
+    } catch (err) {
+      setPreview((p) => (p ? { ...p, expiryStatus: "error", expiryError: err instanceof Error ? err.message : String(err) } : p));
+    }
+  }
+
+  // Re-prices the plan against a specific, explicitly-chosen expiry.
+  // Clears any manually-chosen strikes from before the switch, same
+  // reasoning as repriceWithExpiryMode — a strike picked off one expiry's
+  // chain doesn't carry over to a different expiry's chain.
+  async function repriceWithExpiry(expiry: string) {
+    if (!preview) return;
+    setPreview({ ...preview, status: "loading" });
+    try {
+      const res = await fetch("/api/papertrade/preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ symbol: preview.symbol, direction: preview.direction, mode: preview.mode, expiry }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to price that expiry.");
+      setPreview((p) =>
+        p ? { ...p, status: "ready", plan: data, error: null, showPicker: false, chainRows: null, showExpiryPicker: false } : p
+      );
     } catch (err) {
       setPreview((p) => (p ? { ...p, status: "error", error: err instanceof Error ? err.message : String(err) } : p));
     }
@@ -313,11 +376,17 @@ export default function PaperTradeCandidates({
             // confirm should be what you saw.
             shortStrike: preview.plan.shortLeg.strike,
             ...(preview.plan.longLeg ? { longStrike: preview.plan.longLeg.strike } : {}),
-            // Locks in the same expiry the preview priced — /start defaults
-            // to monthly otherwise, which for a weekly-mode preview would
-            // resolve a completely different expiry (and the locked
-            // strike(s) above might not even exist on that chain).
+            // Locks in the exact expiry the preview priced — /start defaults
+            // to auto-picking monthly otherwise, which could re-resolve a
+            // DIFFERENT expiry than what was previewed (weekly mode,
+            // manually-chosen expiry, or the auto-picker's own rollover
+            // threshold being crossed between preview and confirm) — and
+            // the locked strike(s) above might not even exist on that
+            // different chain. expiryMode is still sent too since it's what
+            // determines whether NIFTY's weekly restriction even applies,
+            // but the explicit expiry is what actually pins the contract.
             expiryMode: preview.plan.expiryMode,
+            expiry: preview.plan.expiry,
             // A fresh plan is always safe to open as a genuinely new
             // position: either there was never an existing one to collide
             // with, or the user explicitly chose "open a new separate
@@ -427,6 +496,33 @@ export default function PaperTradeCandidates({
                   >
                     Weekly
                   </button>
+                </div>
+              )}
+              {!preview.showExpiryPicker && (
+                <button onClick={openExpiryPicker} className="mt-1 text-[11px] text-accent underline decoration-dotted">
+                  Choose expiry myself
+                </button>
+              )}
+              {preview.showExpiryPicker && (
+                <div className="mt-1 rounded-lg border border-border bg-surface2 p-2">
+                  {preview.expiryStatus === "loading" && <p className="text-[11px] text-muted">Loading expiries…</p>}
+                  {preview.expiryStatus === "error" && <p className="text-[11px] text-danger">{preview.expiryError}</p>}
+                  {preview.expiryOptions && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {preview.expiryOptions.map((e) => (
+                        <button
+                          key={e}
+                          onClick={() => repriceWithExpiry(e)}
+                          disabled={e === preview.plan!.expiry}
+                          className={`rounded-lg border px-2 py-1 text-[11px] font-medium ${
+                            e === preview.plan!.expiry ? "border-accent bg-accent/10 text-accent" : "border-border bg-surface"
+                          }`}
+                        >
+                          {e}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
               <p>Underlying {fmt(preview.plan.underlyingPrice)}</p>
