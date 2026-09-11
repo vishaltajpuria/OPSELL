@@ -74,6 +74,23 @@ export function pickMonthlyExpiry(allExpiries: string[], today: Date): MonthlyEx
 }
 
 /**
+ * Resolves an explicitly-chosen expiry instead of auto-picking one —
+ * "choose expiry myself", the same escape hatch manualStrikes already
+ * offers for strikes. Validates the given date is actually one of the
+ * symbol's real expiries rather than trusting it outright. usedNextMonth is
+ * always false here: that flag means "the auto-picker rolled past the near
+ * month for you," which doesn't apply to a date you picked yourself.
+ */
+export function resolveManualExpiry(allExpiries: string[], expiry: string, today: Date): MonthlyExpiryChoice | null {
+  if (!allExpiries.includes(expiry)) return null;
+  return {
+    expiry,
+    tradingSessionsUntil: countTradingSessionsUntil(today, new Date(expiry + "T00:00:00Z")),
+    usedNextMonth: false,
+  };
+}
+
+/**
  * Picks the nearest upcoming expiry (today or later) from the FULL expiry
  * list, unfiltered by month — for a symbol with weekly expiries (NIFTY),
  * this is simply this week's contract, whether or not it also happens to
@@ -201,6 +218,17 @@ export type TradePlan = {
  * F&O contract on NSE, which the auto-picked strikes' bid/ask quality
  * depends on; other symbols' weeklies (where they exist at all) aren't
  * reliable enough to default this on for.
+ *
+ * manualExpiry, when given, takes over expiry selection entirely — any
+ * real expiry the symbol has, monthly or weekly, bypassing both
+ * expiryMode's auto-pick (including the 12-session next-month rollover)
+ * and the NIFTY-only weekly restriction, since a date the user chose
+ * explicitly doesn't need either kind of guardrail. This is the fix for a
+ * real surprise the auto-picker's rollover caused: a stock priced days
+ * before its near-month expiry silently rolls to next month's contract
+ * (see pickMonthlyExpiry), which genuinely costs more (extra ~30 days of
+ * time value) — correct behavior for an unattended pick, but confusing
+ * when compared against a broker screen defaulting to the near month.
  */
 const WEEKLY_EXPIRY_SYMBOL = "NIFTY";
 
@@ -209,18 +237,24 @@ export async function buildTradePlan(
   direction: "short" | "long",
   mode: "buy" | "sell",
   manualStrikes?: { short: number; long?: number },
-  expiryMode: "monthly" | "weekly" = "monthly"
+  expiryMode: "monthly" | "weekly" = "monthly",
+  manualExpiry?: string
 ): Promise<TradePlan> {
-  if (expiryMode === "weekly" && symbol !== WEEKLY_EXPIRY_SYMBOL) {
+  if (!manualExpiry && expiryMode === "weekly" && symbol !== WEEKLY_EXPIRY_SYMBOL) {
     throw new Error(`Weekly expiries are only available for ${WEEKLY_EXPIRY_SYMBOL}.`);
   }
 
   const expiries = await getOptionExpiries(symbol);
-  const expiryChoice =
-    expiryMode === "weekly" ? pickWeeklyExpiry(expiries, new Date()) : pickMonthlyExpiry(expiries, new Date());
+  const expiryChoice = manualExpiry
+    ? resolveManualExpiry(expiries, manualExpiry, new Date())
+    : expiryMode === "weekly"
+      ? pickWeeklyExpiry(expiries, new Date())
+      : pickMonthlyExpiry(expiries, new Date());
   if (!expiryChoice) {
     throw new Error(
-      `No option expiries found for ${symbol} — it may not have listed options here (e.g. SENSEX options trade on BSE, which this app doesn't fetch instrument data for).`
+      manualExpiry
+        ? `${manualExpiry} isn't one of ${symbol}'s available expiries.`
+        : `No option expiries found for ${symbol} — it may not have listed options here (e.g. SENSEX options trade on BSE, which this app doesn't fetch instrument data for).`
     );
   }
 

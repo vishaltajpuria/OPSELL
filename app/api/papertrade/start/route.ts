@@ -56,6 +56,16 @@ export async function POST(request: NextRequest) {
   // Same optional weekly-expiry override as /preview (NIFTY only —
   // buildTradePlan enforces that).
   const expiryMode = body?.expiryMode === "weekly" ? "weekly" : "monthly";
+  // Same optional explicit-expiry override as /preview — passed through so
+  // the expiry that actually gets confirmed matches what was previewed
+  // (auto-picked, weekly, or user-chosen) rather than expiryMode alone
+  // potentially re-resolving a DIFFERENT expiry at confirm time (the date
+  // crossing the 12-session rollover threshold between preview and confirm,
+  // or — before this existed — a manually-chosen expiry simply not being
+  // remembered here at all). manualStrikes above is matched against
+  // whichever expiry's chain this resolves to, so leaving this out is what
+  // let a manually-picked expiry get silently overridden on confirm.
+  const manualExpiry = typeof body?.expiry === "string" && body.expiry ? body.expiry : undefined;
   const forceNew = body?.forceNew === true;
 
   try {
@@ -67,7 +77,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const plan = await buildTradePlan(symbol, direction, mode, manualStrikes, expiryMode);
+    const plan = await buildTradePlan(symbol, direction, mode, manualStrikes, expiryMode, manualExpiry);
     const capitalRequired = await computeCapitalRequired(plan, lots, requireAccessToken());
     const now = new Date().toISOString();
     const trade: PaperTrade = {
