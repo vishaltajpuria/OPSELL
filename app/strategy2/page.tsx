@@ -71,6 +71,45 @@ function isCurrentShape(s: unknown): s is StoredWtSignal {
   );
 }
 
+// Percentile rank of each value within the given set (0-100) — same
+// approach as lib/scanFilter.ts's own ranking, just duplicated here rather
+// than imported since this is a small, self-contained display-ordering
+// concern, not a signal-detection one.
+function percentileRanks(values: number[]): number[] {
+  const sorted = [...values].sort((a, b) => a - b);
+  return values.map((v) => {
+    let countAtOrBelow = 0;
+    for (const s of sorted) if (s <= v) countAtOrBelow++;
+    return (countAtOrBelow / sorted.length) * 100;
+  });
+}
+
+// How much weight WT depth carries vs. gap size in the ranking below — "more
+// preference to WT value" per request, so it dominates the blend without the
+// gap being completely ignored as a tiebreaker-ish factor.
+const WT_RANK_WEIGHT = 0.65;
+const GAP_RANK_WEIGHT = 0.35;
+
+/**
+ * Orders one direction's signals by a blend of two percentile ranks: how
+ * deep today's WT breach is (|wt2AtSignal| — further past +-55 ranks
+ * higher) and how large the same-direction gap target is (|nextGap.percent|
+ * — no gap ranks at the bottom of that axis, not excluded). WT gets more
+ * weight per request, so it dominates the ordering; gap only meaningfully
+ * moves the ranking among stocks with a similar WT depth.
+ */
+function rankSignals(signals: StoredWtSignal[]): StoredWtSignal[] {
+  if (signals.length <= 1) return signals;
+  const wtStrength = signals.map((s) => Math.abs(s.wt2AtSignal));
+  const gapStrength = signals.map((s) => (s.nextGap ? Math.abs(s.nextGap.percent) : 0));
+  const wtRanks = percentileRanks(wtStrength);
+  const gapRanks = percentileRanks(gapStrength);
+  return signals
+    .map((s, i) => ({ s, score: WT_RANK_WEIGHT * wtRanks[i] + GAP_RANK_WEIGHT * gapRanks[i] }))
+    .sort((a, b) => b.score - a.score)
+    .map((r) => r.s);
+}
+
 export default async function Strategy2Page() {
   if (!isConnected()) redirect("/settings");
 
@@ -83,8 +122,8 @@ export default async function Strategy2Page() {
   }
 
   const validSignals = (latest?.signals ?? []).filter(isCurrentShape);
-  const longSignals = validSignals.filter((s) => s.direction === "long");
-  const shortSignals = validSignals.filter((s) => s.direction === "short");
+  const longSignals = rankSignals(validSignals.filter((s) => s.direction === "long"));
+  const shortSignals = rankSignals(validSignals.filter((s) => s.direction === "short"));
 
   return (
     <main className="px-4 pt-6">
