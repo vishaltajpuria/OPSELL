@@ -3,6 +3,7 @@ import type { SmaPoint } from "@/lib/strategy";
 import type { GapInfo } from "@/lib/gaps";
 import type { VolumeSpikeCheck } from "@/lib/volumeSpike";
 import type { WaveTrendCheck, DoubleWaveTrendCheck } from "@/lib/waveTrend";
+import type { WtStrategySignal } from "@/lib/wtStrategy";
 
 let client: Redis | null = null;
 
@@ -119,6 +120,41 @@ export async function saveSignalBatch(
 
 export async function getLatestSignals(): Promise<LatestSignals | null> {
   return (await getRedis().get<LatestSignals>("signals:latest")) ?? null;
+}
+
+// --- Strategy Tab 2 (WT/Double WT + volume, no Supertrend/SMA crossover at
+// all — see lib/wtStrategy.ts) — a completely separate signal list from the
+// one above, own Redis keys, same batching/merge shape reused as-is. ---
+
+export type StoredWtSignal = WtStrategySignal & { symbol: string };
+export type LatestWtSignals = { date: string; runAt: string; signals: StoredWtSignal[] };
+
+type WtStoredBatchPayload = { signals: StoredWtSignal[]; savedAt: string };
+
+function wtBatchKey(dateKey: string, batchId: BatchId): string {
+  return `wtsignals:${dateKey}:${batchId}`;
+}
+
+async function republishWtMerged(dateKey: string): Promise<void> {
+  const redis = getRedis();
+  const keys = BATCH_IDS.map((b) => wtBatchKey(dateKey, b));
+  const batches = await Promise.all(keys.map((k) => redis.get<WtStoredBatchPayload>(k)));
+  const signals = batches.flatMap((b) => b?.signals ?? []);
+  const payload: LatestWtSignals = { date: dateKey, runAt: new Date().toISOString(), signals };
+  await redis.set(`wtsignals:${dateKey}`, payload);
+  await redis.set("wtsignals:latest", payload);
+}
+
+/** Same per-batch-key-then-republish shape as saveSignalBatch above. */
+export async function saveWtSignalBatch(dateKey: string, batchId: BatchId, signals: StoredWtSignal[]): Promise<void> {
+  const redis = getRedis();
+  const payload: WtStoredBatchPayload = { signals, savedAt: new Date().toISOString() };
+  await redis.set(wtBatchKey(dateKey, batchId), payload);
+  await republishWtMerged(dateKey);
+}
+
+export async function getLatestWtSignals(): Promise<LatestWtSignals | null> {
+  return (await getRedis().get<LatestWtSignals>("wtsignals:latest")) ?? null;
 }
 
 export type PaperTradeLeg = { tradingsymbol: string; strike: number; optionType: "CE" | "PE" };
