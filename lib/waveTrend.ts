@@ -35,9 +35,12 @@ export function computeWaveTrend(
 
 // wt2 (the slower line) breaching this level is the whole signal — no wt1
 // crossover required, just reaching this deep into oversold/overbought
-// territory at all.
-const OVERSOLD = -50;
-const OVERBOUGHT = 50;
+// territory at all. Default for the main strategy's WT/Double WT
+// confirmation checks below — Strategy Tab 2 (lib/wtStrategy.ts) passes its
+// own, higher threshold explicitly rather than sharing this one, since the
+// two serve different purposes (a confirmation signal vs. the sole entry
+// gate) and were tuned separately.
+const DEFAULT_THRESHOLD = 50;
 // How many trading days either side of the Supertrend/SMA crossover a
 // breach still counts as confirming it — it can happen before OR after,
 // unlike the volume-spike check's trailing-only window (see
@@ -63,12 +66,13 @@ export function findThresholdBreachIndex(
   wt2: number[],
   fromIndex: number,
   toIndex: number,
-  direction: "short" | "long"
+  direction: "short" | "long",
+  threshold: number = DEFAULT_THRESHOLD
 ): number | null {
   for (let i = Math.max(fromIndex, 0); i <= toIndex; i++) {
     const v = wt2[i];
     if (Number.isNaN(v)) continue;
-    if (direction === "long" ? v <= OVERSOLD : v >= OVERBOUGHT) return i;
+    if (direction === "long" ? v <= -threshold : v >= threshold) return i;
   }
   return null;
 }
@@ -135,9 +139,10 @@ export function findDoubleBreachIndex(
   wt2: number[],
   asOf: number,
   lookbackDays: number,
-  direction: "short" | "long"
+  direction: "short" | "long",
+  threshold: number = DEFAULT_THRESHOLD
 ): number | null {
-  const breached = (v: number) => (direction === "long" ? v <= OVERSOLD : v >= OVERBOUGHT);
+  const breached = (v: number) => (direction === "long" ? v <= -threshold : v >= threshold);
   const from = Math.max(0, asOf - lookbackDays);
   let sawFirstBreach = false;
   let recoveredSince = false;
