@@ -47,6 +47,30 @@ function doubleWtTick(s: StoredWtSignal) {
   );
 }
 
+// Redis holds whatever the last run(s) wrote per-batch, and this signal's
+// own shape has changed more than once today (isDouble/signalDate ->
+// wtBreachDate/hasDoubleWt/dwtDate/nextGap) — if the daily cron's three
+// batches straddled a deploy, "wtsignals:latest" can end up merging
+// old-shaped and new-shaped objects together, since each batch key is only
+// ever validated by whatever code wrote it. TypeScript's cast in
+// getLatestWtSignals doesn't check this at runtime, so this page checks it
+// explicitly and drops anything that doesn't match, rather than crashing
+// the whole route on one stale entry the way the main Strategy tab once did.
+function isCurrentShape(s: unknown): s is StoredWtSignal {
+  if (typeof s !== "object" || s === null) return false;
+  const r = s as Record<string, unknown>;
+  return (
+    typeof r.symbol === "string" &&
+    (r.direction === "long" || r.direction === "short") &&
+    typeof r.wtBreachDate === "string" &&
+    typeof r.wt2AtSignal === "number" &&
+    typeof r.hasDoubleWt === "boolean" &&
+    typeof r.entryPrice === "number" &&
+    typeof r.volumeSpike === "object" &&
+    r.volumeSpike !== null
+  );
+}
+
 export default async function Strategy2Page() {
   if (!isConnected()) redirect("/settings");
 
@@ -58,8 +82,9 @@ export default async function Strategy2Page() {
     error = err instanceof Error ? err.message : "Failed to load signals.";
   }
 
-  const longSignals = (latest?.signals ?? []).filter((s) => s.direction === "long");
-  const shortSignals = (latest?.signals ?? []).filter((s) => s.direction === "short");
+  const validSignals = (latest?.signals ?? []).filter(isCurrentShape);
+  const longSignals = validSignals.filter((s) => s.direction === "long");
+  const shortSignals = validSignals.filter((s) => s.direction === "short");
 
   return (
     <main className="px-4 pt-6">
@@ -77,7 +102,7 @@ export default async function Strategy2Page() {
         <p className="mt-4 rounded-lg border border-danger/40 bg-danger/10 p-3 text-sm text-danger">{error}</p>
       )}
 
-      {!error && (!latest || latest.signals.length === 0) && (
+      {!error && (!latest || validSignals.length === 0) && (
         <div className="mt-6 rounded-xl border border-border bg-surface p-5 text-center">
           <p className="text-3xl">🤖</p>
           <p className="mt-3 text-sm text-muted">
@@ -94,7 +119,7 @@ export default async function Strategy2Page() {
         </div>
       )}
 
-      {!error && latest && latest.signals.length > 0 && (
+      {!error && latest && validSignals.length > 0 && (
         <>
           <p className="mt-4 text-xs text-muted">
             Last run{" "}
