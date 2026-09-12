@@ -15,9 +15,6 @@ const MIN_CANDLES = 80;
 // confirmations layered onto an independent crossover signal.
 const WT_THRESHOLD = 55;
 
-// How many trailing trading days (as of today) a single WT breach still
-// counts as a live signal.
-const WT_RECENCY_DAYS = 10;
 // How many trailing trading days the WHOLE breach-recover-breach Double WT
 // pattern — not just its completing breach — can span and still count as
 // live. Wider than WT_RECENCY_DAYS since the pattern itself takes longer to
@@ -26,9 +23,12 @@ const DWT_RECENCY_DAYS = 20;
 
 export type WtStrategySignal = {
   direction: "short" | "long";
-  // The qualifying WT breach — this alone is the entry gate. Double WT
-  // below is an additional tick shown on top, same role as volumeSpike; it
-  // no longer changes whether a stock makes the list at all.
+  // The gate: today's wt2 itself must be beyond +-WT_THRESHOLD — not a
+  // lookback window, so wtBreachDate is always today's date. Kept as an
+  // explicit field (rather than assumed to be "today" implicitly) so a
+  // reader doesn't have to know that rule to trust what's displayed. Double
+  // WT below is an additional tick shown on top, same role as volumeSpike;
+  // it no longer changes whether a stock makes the list at all.
   wtBreachDate: string;
   wt2AtSignal: number;
   // Whether wt2 ALSO completed a full breach-recover-breach pattern for
@@ -50,12 +50,14 @@ export type WtStrategySignal = {
 /**
  * Strategy Tab 2's own entry signal — standalone, NOT anchored to the
  * Supertrend/SMA crossover strategy in lib/strategy.ts at all (that
- * strategy plays no part here). The ONLY gate is a plain WT breach: wt2
- * reaching beyond +-WT_THRESHOLD within the last WT_RECENCY_DAYS trading
- * days (see findThresholdBreachIndex). Double WT, volume spike, and the
- * next same-direction gap are all informational ticks/annotations checked
- * on top of a stock that already qualified — none of them can qualify a
- * stock on their own.
+ * strategy plays no part here). The ONLY gate is TODAY's wt2 value itself
+ * being beyond +-WT_THRESHOLD — not a lookback window; a breach from a few
+ * days ago that wt2 has since moved back inside the band no longer
+ * qualifies. Double WT, volume spike, and the next same-direction gap are
+ * all informational ticks/annotations checked on top of a stock that
+ * already qualified today — none of them can qualify a stock on their own,
+ * and Double WT's own 20-day lookback (for its EARLIER, first breach) is
+ * separate from this today-only gate.
  *
  * Computed on real OHLC, not Heikin Ashi — matches lib/waveTrend.ts's own
  * reasoning (true price extremes are what an oversold/overbought reading
@@ -70,8 +72,8 @@ export function detectWtSignals(candles: Candle[]): WtStrategySignal[] {
 
   const signals: WtStrategySignal[] = [];
   for (const direction of ["long", "short"] as const) {
-    const wtIdx = findThresholdBreachIndex(wt2, Math.max(0, i - WT_RECENCY_DAYS), i, direction, WT_THRESHOLD);
-    if (wtIdx === null) continue; // no WT breach -> no signal, regardless of anything else
+    const wtIdx = findThresholdBreachIndex(wt2, i, i, direction, WT_THRESHOLD); // today only
+    if (wtIdx === null) continue; // today's wt2 isn't beyond the threshold -> no signal, regardless of anything else
 
     const doubleIdx = findDoubleBreachIndex(wt2, i, DWT_RECENCY_DAYS, direction, WT_THRESHOLD);
     const gapDirection = direction === "long" ? "up" : "down";
