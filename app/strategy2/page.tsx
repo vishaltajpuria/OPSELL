@@ -9,12 +9,11 @@ function fmt(n: number) {
   return n.toLocaleString("en-IN", { maximumFractionDigits: 2 });
 }
 
-// "Super" mirrors the main Strategy tab's SMA50/100-vs-SMA20 naming: the
-// stronger, rarer version of the same underlying condition (Double WT vs a
-// single WT breach — see lib/wtStrategy.ts).
-function signalLabel(s: StoredWtSignal): string {
-  const base = s.direction === "short" ? "Short" : "Long";
-  return s.isDouble ? `Super ${base}` : base;
+// Candle dates carry a full ISO timestamp (daily candles are all midnight
+// IST, so the time part is never meaningful) — trimmed to just the calendar
+// date for display, per "time not needed."
+function dateOnly(iso: string): string {
+  return iso.slice(0, 10);
 }
 
 // Amber badge, same meaning and color as the main Strategy tab's — a
@@ -23,14 +22,27 @@ function signalLabel(s: StoredWtSignal): string {
 // backtest of the main strategy showed a volume spike does NOT reliably
 // make a signal stronger, so this is shown for you to judge, not to imply
 // "confirmed = better."
-function volumeBadge(s: StoredWtSignal) {
+function volumeTick(s: StoredWtSignal) {
   if (s.volumeSpike.status !== "confirmed") return null;
   return (
     <span
       className="text-[9px] font-semibold uppercase text-amber-400"
-      title={`Volume spike ${s.volumeSpike.spikeRatio?.toFixed(1)}x the 30-day average on ${s.volumeSpike.spikeDate}`}
+      title={`Volume spike ${s.volumeSpike.spikeRatio?.toFixed(1)}x the 30-day average on ${dateOnly(s.volumeSpike.spikeDate ?? "")}`}
     >
       Vol ✓
+    </span>
+  );
+}
+
+// Violet tick, same color as the main Strategy tab's DWT badge — WT is the
+// only gate here (see lib/wtStrategy.ts), so this just flags that the
+// stronger breach-recover-breach pattern ALSO happened, same role as the
+// volume tick above.
+function doubleWtTick(s: StoredWtSignal) {
+  if (!s.hasDoubleWt) return null;
+  return (
+    <span className="text-[9px] font-semibold uppercase text-violet-400" title={`Double WT confirmed on ${dateOnly(s.dwtDate ?? "")}`}>
+      DWT ✓
     </span>
   );
 }
@@ -46,15 +58,15 @@ export default async function Strategy2Page() {
     error = err instanceof Error ? err.message : "Failed to load signals.";
   }
 
-  const longSignals = (latest?.signals ?? []).filter((s) => s.direction === "long").sort((a, b) => (b.isDouble ? 1 : 0) - (a.isDouble ? 1 : 0));
-  const shortSignals = (latest?.signals ?? []).filter((s) => s.direction === "short").sort((a, b) => (b.isDouble ? 1 : 0) - (a.isDouble ? 1 : 0));
+  const longSignals = (latest?.signals ?? []).filter((s) => s.direction === "long");
+  const shortSignals = (latest?.signals ?? []).filter((s) => s.direction === "short");
 
   return (
     <main className="px-4 pt-6">
       <h1 className="text-xl font-semibold">Strategy Tab 2</h1>
       <p className="mt-1 text-sm text-muted">
-        WT / Double WT first, volume spike checked on top — the Supertrend + SMA crossover strategy plays no part
-        here.
+        WT breach is the only filter — Double WT and volume spike are shown as ticks on top, and the Supertrend +
+        SMA crossover strategy plays no part here.
       </p>
 
       <div className="mt-4">
@@ -111,15 +123,31 @@ export default async function Strategy2Page() {
                     <li key={`${s.symbol}-${i}`} className="rounded-lg border border-border bg-surface p-2.5">
                       <div className="flex items-center justify-between gap-1">
                         <p className="truncate text-xs font-medium">{s.symbol}</p>
-                        {volumeBadge(s)}
+                        <span className="flex shrink-0 gap-1">
+                          {volumeTick(s)}
+                          {doubleWtTick(s)}
+                        </span>
                       </div>
                       <p className={`text-[10px] font-semibold uppercase ${s.direction === "short" ? "text-danger" : "text-accent"}`}>
-                        {signalLabel(s)}
+                        {s.direction === "short" ? "Short" : "Long"}
                       </p>
                       <p className="mt-1 text-[11px] text-muted">
                         Entry {fmt(s.entryPrice)}
                         <br />
-                        {s.isDouble ? "2nd breach" : "Breach"} {s.signalDate} · wt2 {s.wt2AtSignal.toFixed(0)}
+                        WT breach {dateOnly(s.wtBreachDate)} · wt2 {s.wt2AtSignal.toFixed(0)}
+                        {s.hasDoubleWt && (
+                          <>
+                            <br />
+                            DWT {dateOnly(s.dwtDate ?? "")}
+                          </>
+                        )}
+                        {s.nextGap && (
+                          <>
+                            <br />
+                            Gap {fmt(s.nextGap.price)} ({s.nextGap.percent >= 0 ? "+" : ""}
+                            {s.nextGap.percent.toFixed(1)}%)
+                          </>
+                        )}
                       </p>
                     </li>
                   ))}

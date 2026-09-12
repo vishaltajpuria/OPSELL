@@ -1,12 +1,19 @@
 import type { Candle } from "@/lib/kite";
 import { computeWaveTrend, findThresholdBreachIndex, findDoubleBreachIndex } from "@/lib/waveTrend";
 import { checkVolumeSpike, type VolumeSpikeCheck } from "@/lib/volumeSpike";
+import { findNextGap, type GapInfo } from "@/lib/gaps";
 
 // Enough real trading days for WT's own warm-up (channelLength 10 + avgLength
 // 21 + maLength 4 ≈ 35 bars before wt2 has any valid value) plus the Double
 // WT lookback (20 more) and a safety buffer — smaller than the main
 // Supertrend/SMA strategy's MIN_CANDLES=210, since WT has no SMA200 to warm up.
 const MIN_CANDLES = 80;
+
+// Strategy Tab 2's own gate threshold — higher (stricter) than the main
+// strategy's WT/Double WT confirmation checks (50, in lib/waveTrend.ts),
+// since here WT is the SOLE entry filter rather than one of several
+// confirmations layered onto an independent crossover signal.
+const WT_THRESHOLD = 55;
 
 // How many trailing trading days (as of today) a single WT breach still
 // counts as a live signal.
@@ -19,35 +26,41 @@ const DWT_RECENCY_DAYS = 20;
 
 export type WtStrategySignal = {
   direction: "short" | "long";
-  isDouble: boolean; // true = Double WT ("Super"), false = plain WT
-  signalDate: string; // day of the (completing) breach
-  entryPrice: number; // today's close
+  // The qualifying WT breach — this alone is the entry gate. Double WT
+  // below is an additional tick shown on top, same role as volumeSpike; it
+  // no longer changes whether a stock makes the list at all.
+  wtBreachDate: string;
   wt2AtSignal: number;
+  // Whether wt2 ALSO completed a full breach-recover-breach pattern for
+  // this direction within DWT_RECENCY_DAYS — see findDoubleBreachIndex in
+  // lib/waveTrend.ts. hasDoubleWt without dwtDate never happens; dwtDate is
+  // only null when hasDoubleWt is false.
+  hasDoubleWt: boolean;
+  dwtDate: string | null;
+  entryPrice: number; // today's close
   volumeSpike: VolumeSpikeCheck;
+  // Nearest still-unfilled REAL (non-Heikin-Ashi) price gap on the SAME
+  // side as the signal's direction — an upside gap for "long", downside for
+  // "short" — see findNextGap's direction param in lib/gaps.ts. A gap on
+  // the wrong side isn't a plausible target for this signal, so it's
+  // excluded rather than shown as the "nearest" one regardless of side.
+  nextGap: GapInfo | null;
 };
 
 /**
  * Strategy Tab 2's own entry signal — standalone, NOT anchored to the
  * Supertrend/SMA crossover strategy in lib/strategy.ts at all (that
- * strategy plays no part here). A stock qualifies, per direction, when
- * either:
- *  - Double WT: wt2 completed a breach-recover-breach pattern (see
- *    findDoubleBreachIndex in lib/waveTrend.ts) within the last
- *    DWT_RECENCY_DAYS trading days — checked first and, when it qualifies,
- *    reported INSTEAD of the plain WT signal below for that direction: it's
- *    the stronger version of the same underlying condition, same "Super"
- *    naming convention as the main Strategy tab's SMA50/100-vs-SMA20
- *    trigger.
- *  - Plain WT: wt2 breached +-50 (see findThresholdBreachIndex) within the
- *    last WT_RECENCY_DAYS trading days, with no qualifying Double WT.
+ * strategy plays no part here). The ONLY gate is a plain WT breach: wt2
+ * reaching beyond +-WT_THRESHOLD within the last WT_RECENCY_DAYS trading
+ * days (see findThresholdBreachIndex). Double WT, volume spike, and the
+ * next same-direction gap are all informational ticks/annotations checked
+ * on top of a stock that already qualified — none of them can qualify a
+ * stock on their own.
  *
- * Volume-spike confirmation (lib/volumeSpike.ts) is checked against the
- * signal's own trigger day, exactly as it is for the main strategy —
- * informational only, not a gate; the caller decides what to do with it.
- *
- * Computed on real OHLC, not Heikin Ashi — see lib/waveTrend.ts's own
+ * Computed on real OHLC, not Heikin Ashi — matches lib/waveTrend.ts's own
  * reasoning (true price extremes are what an oversold/overbought reading
- * needs).
+ * needs) and applies to the gap check too (a gap is a real market
+ * phenomenon, not something Heikin Ashi's smoothed candles would show).
  */
 export function detectWtSignals(candles: Candle[]): WtStrategySignal[] {
   if (candles.length < MIN_CANDLES) return [];
@@ -57,29 +70,22 @@ export function detectWtSignals(candles: Candle[]): WtStrategySignal[] {
 
   const signals: WtStrategySignal[] = [];
   for (const direction of ["long", "short"] as const) {
-    const doubleIdx = findDoubleBreachIndex(wt2, i, DWT_RECENCY_DAYS, direction);
-    if (doubleIdx !== null) {
-      signals.push({
-        direction,
-        isDouble: true,
-        signalDate: candles[doubleIdx].date,
-        entryPrice,
-        wt2AtSignal: wt2[doubleIdx],
-        volumeSpike: checkVolumeSpike(candles, doubleIdx),
-      });
-      continue;
-    }
-    const singleIdx = findThresholdBreachIndex(wt2, Math.max(0, i - WT_RECENCY_DAYS), i, direction);
-    if (singleIdx !== null) {
-      signals.push({
-        direction,
-        isDouble: false,
-        signalDate: candles[singleIdx].date,
-        entryPrice,
-        wt2AtSignal: wt2[singleIdx],
-        volumeSpike: checkVolumeSpike(candles, singleIdx),
-      });
-    }
+    const wtIdx = findThresholdBreachIndex(wt2, Math.max(0, i - WT_RECENCY_DAYS), i, direction, WT_THRESHOLD);
+    if (wtIdx === null) continue; // no WT breach -> no signal, regardless of anything else
+
+    const doubleIdx = findDoubleBreachIndex(wt2, i, DWT_RECENCY_DAYS, direction, WT_THRESHOLD);
+    const gapDirection = direction === "long" ? "up" : "down";
+
+    signals.push({
+      direction,
+      wtBreachDate: candles[wtIdx].date,
+      wt2AtSignal: wt2[wtIdx],
+      hasDoubleWt: doubleIdx !== null,
+      dwtDate: doubleIdx !== null ? candles[doubleIdx].date : null,
+      entryPrice,
+      volumeSpike: checkVolumeSpike(candles, wtIdx),
+      nextGap: findNextGap(candles, entryPrice, 20, gapDirection),
+    });
   }
   return signals;
 }

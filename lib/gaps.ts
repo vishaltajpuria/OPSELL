@@ -25,8 +25,19 @@ export type GapInfo = {
  * Returns null if there's no unfilled gap within maxPercent of
  * currentPrice (default 20%) — a gap that far away isn't a near-term level
  * worth surfacing.
+ *
+ * direction, when given, restricts candidates to gaps sitting on that side
+ * of currentPrice only — "up" (percent > 0) for a long/bullish signal, only
+ * an upside gap is a plausible target; "down" for a short. Omitted (the
+ * main Strategy tab's usage) considers both sides and picks whichever is
+ * nearest regardless of direction.
  */
-export function findNextGap(candles: Candle[], currentPrice: number, maxPercent = 20): GapInfo | null {
+export function findNextGap(
+  candles: Candle[],
+  currentPrice: number,
+  maxPercent = 20,
+  direction?: "up" | "down"
+): GapInfo | null {
   let best: GapInfo | null = null;
 
   for (let i = 1; i < candles.length; i++) {
@@ -67,6 +78,8 @@ export function findNextGap(candles: Candle[], currentPrice: number, maxPercent 
 
     const percent = ((edgePrice - currentPrice) / currentPrice) * 100;
     if (Math.abs(percent) > maxPercent) continue;
+    if (direction === "up" && percent <= 0) continue;
+    if (direction === "down" && percent >= 0) continue;
     if (!best || Math.abs(percent) < Math.abs(best.percent)) {
       best = { price: edgePrice, percent };
     }
