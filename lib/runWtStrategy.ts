@@ -3,7 +3,8 @@ import { saveWtSignalBatch, BATCH_IDS, type BatchId, type StoredWtSignal } from 
 import { listFnoStocks, type FnoStock } from "@/lib/instruments";
 import { getEquityToken, getIndexToken } from "@/lib/nseInstruments";
 import { INDEX_DEFS } from "@/lib/indices";
-import { detectWtSignals } from "@/lib/wtStrategy";
+import { detectWtSignals, type WtStrategySignal } from "@/lib/wtStrategy";
+import { resolveAtmOption } from "@/lib/atmOption";
 import { batchQuote } from "@/lib/quoteBatch";
 import { patchTodayCandle } from "@/lib/candleFreshness";
 import { runRateLimited } from "@/lib/rateLimit";
@@ -28,6 +29,27 @@ function partitionForBatch(stocks: FnoStock[], batchId: BatchId): FnoStock[] {
   const start = Math.floor((stocks.length * idx) / n);
   const end = Math.floor((stocks.length * (idx + 1)) / n);
   return stocks.slice(start, end);
+}
+
+/**
+ * Attaches a representative ATM/ITM option (expiry, strike, live premium,
+ * bid/ask spread — see lib/atmOption.ts) to a freshly detected signal,
+ * swallowing any failure to a null atmOption rather than losing the WT
+ * signal itself: an option chain glitch for one symbol (a stale instrument
+ * dump entry, a quote miss) shouldn't cost the whole batch that stock's
+ * otherwise-valid signal.
+ */
+async function enrichWithAtmOption(
+  symbol: string,
+  signal: WtStrategySignal,
+  accessToken: string
+): Promise<StoredWtSignal> {
+  try {
+    const atmOption = await resolveAtmOption(symbol, signal.entryPrice, signal.direction, accessToken);
+    return { symbol, ...signal, atmOption };
+  } catch {
+    return { symbol, ...signal, atmOption: null };
+  }
 }
 
 export type WtStrategyRunResult = {
@@ -68,7 +90,7 @@ export async function runDailyWtStrategy(accessToken: string, batchId: BatchId):
       const rawCandles = await getHistoricalCandles(token, "day", from, to, accessToken);
       const candles = patchTodayCandle(rawCandles, liveQuotes[`NSE:${symbol}`]);
       for (const signal of detectWtSignals(candles)) {
-        signals.push({ symbol, ...signal });
+        signals.push(await enrichWithAtmOption(symbol, signal, accessToken));
       }
     } catch (err) {
       errors.push(`${symbol}: ${err instanceof Error ? err.message : "failed"}`);
@@ -92,7 +114,7 @@ export async function runDailyWtStrategy(accessToken: string, batchId: BatchId):
         const rawDaily = await getHistoricalCandles(token, "day", from, to, accessToken);
         const daily = patchTodayCandle(rawDaily, indexLiveQuotes[`${def.exchange}:${def.tradingsymbol}`]);
         for (const signal of detectWtSignals(daily)) {
-          signals.push({ symbol: def.key, ...signal });
+          signals.push(await enrichWithAtmOption(def.key, signal, accessToken));
         }
       } catch (err) {
         errors.push(`${def.key}: ${err instanceof Error ? err.message : "failed"}`);

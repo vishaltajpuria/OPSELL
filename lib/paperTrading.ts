@@ -39,13 +39,18 @@ export type MonthlyExpiryChoice = {
  * last-Thursday-of-month calendar formula, since NSE shifts an expiry
  * landing on a holiday to the previous trading day.
  *
- * Picks the nearest upcoming monthly expiry; if fewer than
- * MIN_TRADING_SESSIONS (12) trading sessions remain until it, rolls to the
- * next month's monthly expiry instead — there usually isn't enough runway
- * left in a contract that close to expiry for a directional option-buying
- * setup to play out.
+ * Picks the nearest upcoming monthly expiry; if fewer than minSessions
+ * trading sessions remain until it, rolls to the next month's monthly
+ * expiry instead — there usually isn't enough runway left in a contract
+ * that close to expiry. Defaults to MIN_TRADING_SESSIONS (12), the paper
+ * trading threshold; a caller with a different rollover rule (e.g. Strategy
+ * Tab 2's display-only ATM option, which rolls at 6) passes its own.
  */
-export function pickMonthlyExpiry(allExpiries: string[], today: Date): MonthlyExpiryChoice | null {
+export function pickMonthlyExpiry(
+  allExpiries: string[],
+  today: Date,
+  minSessions: number = MIN_TRADING_SESSIONS
+): MonthlyExpiryChoice | null {
   const todayIso = today.toISOString().slice(0, 10);
   const upcoming = allExpiries.filter((e) => e >= todayIso).sort();
   if (upcoming.length === 0) return null;
@@ -61,7 +66,7 @@ export function pickMonthlyExpiry(allExpiries: string[], today: Date): MonthlyEx
 
   const nearExpiry = monthlyExpiries[0];
   const nearSessions = countTradingSessionsUntil(today, new Date(nearExpiry + "T00:00:00Z"));
-  if (nearSessions > MIN_TRADING_SESSIONS || monthlyExpiries.length < 2) {
+  if (nearSessions > minSessions || monthlyExpiries.length < 2) {
     return { expiry: nearExpiry, tradingSessionsUntil: nearSessions, usedNextMonth: false };
   }
 

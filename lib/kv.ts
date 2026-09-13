@@ -4,6 +4,7 @@ import type { GapInfo } from "@/lib/gaps";
 import type { VolumeSpikeCheck } from "@/lib/volumeSpike";
 import type { WaveTrendCheck, DoubleWaveTrendCheck } from "@/lib/waveTrend";
 import type { WtStrategySignal } from "@/lib/wtStrategy";
+import type { AtmOptionInfo } from "@/lib/atmOption";
 
 let client: Redis | null = null;
 
@@ -126,7 +127,13 @@ export async function getLatestSignals(): Promise<LatestSignals | null> {
 // all — see lib/wtStrategy.ts) — a completely separate signal list from the
 // one above, own Redis keys, same batching/merge shape reused as-is. ---
 
-export type StoredWtSignal = WtStrategySignal & { symbol: string };
+// atmOption is optional (rather than required, matching WtStrategySignal's
+// other fields) because it's resolved asynchronously, separately from
+// detectWtSignals itself — see runDailyWtStrategy in lib/runWtStrategy.ts —
+// and because entries already sitting in Redis from before this field
+// existed won't have it at all; the strategy2 page treats it as
+// "unavailable" rather than rejecting the whole entry (isCurrentShape).
+export type StoredWtSignal = WtStrategySignal & { symbol: string; atmOption?: AtmOptionInfo | null };
 export type LatestWtSignals = { date: string; runAt: string; signals: StoredWtSignal[] };
 
 type WtStoredBatchPayload = { signals: StoredWtSignal[]; savedAt: string };
