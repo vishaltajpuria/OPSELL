@@ -1,5 +1,10 @@
 import type { Candle } from "@/lib/kite";
-import { computeWaveTrend, findThresholdBreachIndex, findDoubleBreachIndex } from "@/lib/waveTrend";
+import {
+  computeWaveTrend,
+  findThresholdBreachIndex,
+  findBreachStartIndex,
+  findDoubleBreachIndex,
+} from "@/lib/waveTrend";
 import { checkVolumeSpike, type VolumeSpikeCheck } from "@/lib/volumeSpike";
 import { findNextGap, type GapInfo } from "@/lib/gaps";
 
@@ -21,15 +26,26 @@ const WT_THRESHOLD = 55;
 // play out (a breach, a recovery, then a second breach).
 const DWT_RECENCY_DAYS = 20;
 
+// How far back inside the band wt2 must actually travel to count as
+// "recovered" between the two breaches of a Double WT pattern — shallower
+// than WT_THRESHOLD (55) itself, so a mere tick back under 55 doesn't
+// count; it has to genuinely retreat to 45 before a re-breach counts as a
+// second, separate excursion rather than a continuation of the first.
+const DWT_RECOVERY_LEVEL = 45;
+
 export type WtStrategySignal = {
   direction: "short" | "long";
-  // The gate: today's wt2 itself must be beyond +-WT_THRESHOLD — not a
-  // lookback window, so wtBreachDate is always today's date. Kept as an
-  // explicit field (rather than assumed to be "today" implicitly) so a
-  // reader doesn't have to know that rule to trust what's displayed. Double
+  // The gate is today's wt2 itself being beyond +-WT_THRESHOLD — not a
+  // lookback window. wtBreachDate, though, is the day the CURRENT unbroken
+  // excursion actually started (see findBreachStartIndex) — a stock that's
+  // been sitting past the threshold for several sessions shows that
+  // earlier date, not today's, even though it still qualifies today. Double
   // WT below is an additional tick shown on top, same role as volumeSpike;
   // it no longer changes whether a stock makes the list at all.
   wtBreachDate: string;
+  // Today's own wt2 reading (not the value at wtBreachDate) — how deep the
+  // oscillator is RIGHT NOW, which is what the gate itself checks and what
+  // the page's ranking treats as "WT strength".
   wt2AtSignal: number;
   // Whether wt2 ALSO completed a full breach-recover-breach pattern for
   // this direction within DWT_RECENCY_DAYS — see findDoubleBreachIndex in
@@ -72,20 +88,26 @@ export function detectWtSignals(candles: Candle[]): WtStrategySignal[] {
 
   const signals: WtStrategySignal[] = [];
   for (const direction of ["long", "short"] as const) {
-    const wtIdx = findThresholdBreachIndex(wt2, i, i, direction, WT_THRESHOLD); // today only
+    const wtIdx = findThresholdBreachIndex(wt2, i, i, direction, WT_THRESHOLD); // gate: today only
     if (wtIdx === null) continue; // today's wt2 isn't beyond the threshold -> no signal, regardless of anything else
 
-    const doubleIdx = findDoubleBreachIndex(wt2, i, DWT_RECENCY_DAYS, direction, WT_THRESHOLD);
+    // How far back the current excursion actually goes — used for display
+    // and as the anchor for the volume-spike window below, so a breach
+    // from a few days ago still gets real trailing days to check for a
+    // spike instead of always looking at "today" with nothing after it.
+    const breachStartIdx = findBreachStartIndex(wt2, i, direction, WT_THRESHOLD);
+
+    const doubleIdx = findDoubleBreachIndex(wt2, i, DWT_RECENCY_DAYS, direction, WT_THRESHOLD, DWT_RECOVERY_LEVEL);
     const gapDirection = direction === "long" ? "up" : "down";
 
     signals.push({
       direction,
-      wtBreachDate: candles[wtIdx].date,
-      wt2AtSignal: wt2[wtIdx],
+      wtBreachDate: candles[breachStartIdx].date,
+      wt2AtSignal: wt2[i],
       hasDoubleWt: doubleIdx !== null,
       dwtDate: doubleIdx !== null ? candles[doubleIdx].date : null,
       entryPrice,
-      volumeSpike: checkVolumeSpike(candles, wtIdx),
+      volumeSpike: checkVolumeSpike(candles, breachStartIdx),
       nextGap: findNextGap(candles, entryPrice, 20, gapDirection),
     });
   }
