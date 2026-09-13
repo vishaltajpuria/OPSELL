@@ -242,13 +242,13 @@ export default async function Strategy2Page() {
                           {s.atmOption.optionType} {fmt(s.atmOption.strike)} · {dateOnly(s.atmOption.expiry)}
                           <br />
                           Premium {fmt(s.atmOption.premium)} ({s.atmOption.premiumPercentOfStrike.toFixed(2)}% of strike)
-                          {s.atmOption.bidAskSpreadPercent !== null && (
-                            <>
-                              {" · "}
-                              <span className={`font-semibold ${bidAskColorClass(s.atmOption.bidAskSpreadPercent)}`}>
-                                spread {s.atmOption.bidAskSpreadPercent.toFixed(1)}%
-                              </span>
-                            </>
+                          {" · "}
+                          {s.atmOption.bidAskSpreadPercent !== null ? (
+                            <span className={`font-semibold ${bidAskColorClass(s.atmOption.bidAskSpreadPercent)}`}>
+                              spread {s.atmOption.bidAskSpreadPercent.toFixed(1)}%
+                            </span>
+                          ) : (
+                            <span className="italic">no live bid/ask</span>
                           )}
                         </p>
                       )}
