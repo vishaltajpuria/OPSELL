@@ -47,6 +47,17 @@ function doubleWtTick(s: StoredWtSignal) {
   );
 }
 
+// Bid/ask spread as a percentage of the premium itself — a tight spread
+// (small %) means the quoted mid is trustworthy and the contract is liquid
+// enough to actually trade near it; a wide one means the mid is a rougher
+// estimate. Thresholds are a rule of thumb for NSE F&O options, not derived
+// from anything in this codebase.
+function bidAskColorClass(percent: number): string {
+  if (percent <= 3) return "text-accent";
+  if (percent <= 7) return "text-amber-400";
+  return "text-danger";
+}
+
 // Redis holds whatever the last run(s) wrote per-batch, and this signal's
 // own shape has changed more than once today (isDouble/signalDate ->
 // wtBreachDate/hasDoubleWt/dwtDate/nextGap) — if the daily cron's three
@@ -84,28 +95,41 @@ function percentileRanks(values: number[]): number[] {
   });
 }
 
-// How much weight WT depth carries vs. gap size in the ranking below — "more
-// preference to WT value" per request, so it dominates the blend without the
-// gap being completely ignored as a tiebreaker-ish factor.
-const WT_RANK_WEIGHT = 0.65;
-const GAP_RANK_WEIGHT = 0.35;
+// Relative weight of each ranking factor, per request: WT depth dominates,
+// option cheapness is second, gap size a distant third.
+const WT_RANK_WEIGHT = 0.5;
+const PREMIUM_RANK_WEIGHT = 0.3;
+const GAP_RANK_WEIGHT = 0.2;
 
 /**
- * Orders one direction's signals by a blend of two percentile ranks: how
+ * Orders one direction's signals by a blend of three percentile ranks: how
  * deep today's WT breach is (|wt2AtSignal| — further past +-55 ranks
- * higher) and how large the same-direction gap target is (|nextGap.percent|
- * — no gap ranks at the bottom of that axis, not excluded). WT gets more
- * weight per request, so it dominates the ordering; gap only meaningfully
- * moves the ranking among stocks with a similar WT depth.
+ * higher, 50% weight), how CHEAP the ATM/ITM option is relative to its own
+ * strike (premiumPercentOfStrike — lower ranks higher, since the axis is
+ * inverted below, 30% weight), and how large the same-direction gap target
+ * is (|nextGap.percent|, 20% weight). A stock missing either nextGap or
+ * atmOption (no gap nearby, or the option chain lookup failed) ranks at the
+ * BOTTOM of that one axis rather than being excluded — same treatment for
+ * both, so missing data never accidentally helps a stock's ranking.
  */
 function rankSignals(signals: StoredWtSignal[]): StoredWtSignal[] {
   if (signals.length <= 1) return signals;
   const wtStrength = signals.map((s) => Math.abs(s.wt2AtSignal));
   const gapStrength = signals.map((s) => (s.nextGap ? Math.abs(s.nextGap.percent) : 0));
+  // Percentile-ranking premium% directly would put the MOST expensive
+  // option at the top; inverting (100 - rank) makes the cheapest one rank
+  // highest instead. A missing atmOption gets +Infinity going in, which
+  // sorts to the most-expensive end and so inverts to ~0 — the bottom of
+  // this axis, never a boost.
+  const premiumCost = signals.map((s) => s.atmOption?.premiumPercentOfStrike ?? Infinity);
   const wtRanks = percentileRanks(wtStrength);
   const gapRanks = percentileRanks(gapStrength);
+  const premiumRanks = percentileRanks(premiumCost).map((r) => 100 - r);
   return signals
-    .map((s, i) => ({ s, score: WT_RANK_WEIGHT * wtRanks[i] + GAP_RANK_WEIGHT * gapRanks[i] }))
+    .map((s, i) => ({
+      s,
+      score: WT_RANK_WEIGHT * wtRanks[i] + PREMIUM_RANK_WEIGHT * premiumRanks[i] + GAP_RANK_WEIGHT * gapRanks[i],
+    }))
     .sort((a, b) => b.score - a.score)
     .map((r) => r.s);
 }
@@ -213,6 +237,21 @@ export default async function Strategy2Page() {
                           </>
                         )}
                       </p>
+                      {s.atmOption && (
+                        <p className="mt-1 text-[11px] text-muted">
+                          {s.atmOption.optionType} {fmt(s.atmOption.strike)} · {dateOnly(s.atmOption.expiry)}
+                          <br />
+                          Premium {fmt(s.atmOption.premium)} ({s.atmOption.premiumPercentOfStrike.toFixed(2)}% of strike)
+                          {s.atmOption.bidAskSpreadPercent !== null && (
+                            <>
+                              {" · "}
+                              <span className={`font-semibold ${bidAskColorClass(s.atmOption.bidAskSpreadPercent)}`}>
+                                spread {s.atmOption.bidAskSpreadPercent.toFixed(1)}%
+                              </span>
+                            </>
+                          )}
+                        </p>
+                      )}
                     </li>
                   ))}
                 </ul>
