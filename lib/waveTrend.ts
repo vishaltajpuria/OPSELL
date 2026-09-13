@@ -78,6 +78,31 @@ export function findThresholdBreachIndex(
 }
 
 /**
+ * Given that wt2[todayIndex] already breaches the threshold, walks
+ * backward to find how far the CURRENT, unbroken excursion actually
+ * extends — the earliest index, ending at todayIndex, where every day in
+ * between also breached. A single non-breaching (or NaN) day stops the
+ * walk. Lets a caller show "breached on <the day the move actually
+ * started>" instead of always "today", when a stock has been sitting past
+ * the threshold for several sessions rather than just crossing it now.
+ */
+export function findBreachStartIndex(
+  wt2: number[],
+  todayIndex: number,
+  direction: "short" | "long",
+  threshold: number = DEFAULT_THRESHOLD
+): number {
+  const breached = (v: number) => (direction === "long" ? v <= -threshold : v >= threshold);
+  let start = todayIndex;
+  for (let i = todayIndex - 1; i >= 0; i--) {
+    const v = wt2[i];
+    if (Number.isNaN(v) || !breached(v)) break;
+    start = i;
+  }
+  return start;
+}
+
+/**
  * Checks whether the reversal signal that crossed over at signalIndex was
  * (or still could be) confirmed by wt2 breaching the same-direction
  * threshold within MATCH_WINDOW_DAYS trading days either side of it.
@@ -123,13 +148,19 @@ export type DoubleWaveTrendCheck = {
 /**
  * Finds a same-direction "Double WT" pattern completing at or before asOf,
  * within the DOUBLE_LOOKBACK_DAYS trading days ending there: wt2 breaches
- * the threshold, recovers back inside the band, then breaches again — the
- * oscillator equivalent of a double bottom/top. Multiple breach days in a
- * row without an intervening recovery count as ONE excursion, not a
- * double — only a breach that happens after wt2 has actually come back
- * inside the band counts as the confirming second breach. Returns the
- * index of that second breach (the earliest one found scanning forward
- * from fromIndex), or null.
+ * the threshold, recovers all the way back to recoveryLevel (a shallower
+ * level than threshold — e.g. threshold 55 recovering to 45, not merely
+ * ticking back under 55), then breaches the threshold again — the
+ * oscillator equivalent of a double bottom/top. A partial pull-back that
+ * never reaches recoveryLevel doesn't count as a recovery at all, so
+ * re-breaching after one is still the SAME excursion, not a double.
+ * Returns the index of the confirming second breach (the earliest one
+ * found scanning forward from fromIndex), or null.
+ *
+ * recoveryLevel defaults to threshold itself, which reduces to the old
+ * "any day back inside the band counts" behavior — the main strategy's
+ * checkDoubleWaveTrend below relies on that default and is unaffected by
+ * this parameter.
  *
  * Exported standalone from checkDoubleWaveTrend so the pattern logic
  * itself can be unit-tested against a hand-built wt2 array, same reasoning
@@ -140,9 +171,11 @@ export function findDoubleBreachIndex(
   asOf: number,
   lookbackDays: number,
   direction: "short" | "long",
-  threshold: number = DEFAULT_THRESHOLD
+  threshold: number = DEFAULT_THRESHOLD,
+  recoveryLevel: number = threshold
 ): number | null {
   const breached = (v: number) => (direction === "long" ? v <= -threshold : v >= threshold);
+  const recovered = (v: number) => (direction === "long" ? v >= -recoveryLevel : v <= recoveryLevel);
   const from = Math.max(0, asOf - lookbackDays);
   let sawFirstBreach = false;
   let recoveredSince = false;
@@ -153,7 +186,7 @@ export function findDoubleBreachIndex(
       if (sawFirstBreach && recoveredSince) return i;
       sawFirstBreach = true;
       recoveredSince = false;
-    } else if (sawFirstBreach) {
+    } else if (sawFirstBreach && recovered(v)) {
       recoveredSince = true;
     }
   }
