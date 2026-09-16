@@ -120,12 +120,12 @@ function percentileRanks(values: number[]): number[] {
   });
 }
 
-// Relative weight of each ranking factor, per request: WT depth and option
-// cheapness are co-equal and dominant, gap size a clear third, the 4H
-// Supertrend read a minor tiebreaker-ish factor.
+// Relative weight of each ranking factor, per request: WT depth, option
+// cheapness, and gap size are equal-weighted; the 4H Supertrend read stays
+// a minor tiebreaker-ish factor.
 const WT_RANK_WEIGHT = 0.3;
 const PREMIUM_RANK_WEIGHT = 0.3;
-const GAP_RANK_WEIGHT = 0.2;
+const GAP_RANK_WEIGHT = 0.3;
 const FOUR_HOUR_RANK_WEIGHT = 0.1;
 
 /**
@@ -134,7 +134,7 @@ const FOUR_HOUR_RANK_WEIGHT = 0.1;
  * 30% weight), how CHEAP the ATM/ITM option is relative to its own strike
  * (premiumPercentOfStrike — lower ranks higher, since the axis is inverted
  * below, 30% weight), how large the same-direction gap target is
- * (|nextGap.percent|, 20% weight), and whether matchesFourHourTick holds —
+ * (|nextGap.percent|, 30% weight), and whether matchesFourHourTick holds —
  * the B4H/A4H tick above — worth a flat 100/0 rather than a percentile rank
  * since it's a yes/no read, not a magnitude (10% weight). A stock missing
  * nextGap or atmOption (no gap nearby, or the option chain lookup failed)
