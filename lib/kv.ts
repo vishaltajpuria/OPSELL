@@ -123,17 +123,26 @@ export async function getLatestSignals(): Promise<LatestSignals | null> {
   return (await getRedis().get<LatestSignals>("signals:latest")) ?? null;
 }
 
-// --- Strategy Tab 2 (WT/Double WT + volume, no Supertrend/SMA crossover at
+// --- Strategy Tab 2 (WT/Double WT + volume, no Supertrend/SMA CROSSOVER at
 // all — see lib/wtStrategy.ts) — a completely separate signal list from the
-// one above, own Redis keys, same batching/merge shape reused as-is. ---
+// one above, own Redis keys, same batching/merge shape reused as-is.
+// belowFourHourSupertrend is a plain informational read of 4H Supertrend
+// (see lib/fourHourSupertrend.ts), not a crossover trigger — it doesn't
+// touch the "SMA crossing Supertrend" strategy this tab deliberately
+// excludes. ---
 
-// atmOption is optional (rather than required, matching WtStrategySignal's
-// other fields) because it's resolved asynchronously, separately from
-// detectWtSignals itself — see runDailyWtStrategy in lib/runWtStrategy.ts —
-// and because entries already sitting in Redis from before this field
-// existed won't have it at all; the strategy2 page treats it as
-// "unavailable" rather than rejecting the whole entry (isCurrentShape).
-export type StoredWtSignal = WtStrategySignal & { symbol: string; atmOption?: AtmOptionInfo | null };
+// atmOption and belowFourHourSupertrend are both optional (rather than
+// required, matching WtStrategySignal's other fields) because they're
+// resolved asynchronously, separately from detectWtSignals itself — see
+// runDailyWtStrategy in lib/runWtStrategy.ts — and because entries already
+// sitting in Redis from before these fields existed won't have them at
+// all; the strategy2 page treats a missing one as "unavailable" rather
+// than rejecting the whole entry (isCurrentShape).
+export type StoredWtSignal = WtStrategySignal & {
+  symbol: string;
+  atmOption?: AtmOptionInfo | null;
+  belowFourHourSupertrend?: boolean | null;
+};
 export type LatestWtSignals = { date: string; runAt: string; signals: StoredWtSignal[] };
 
 type WtStoredBatchPayload = { signals: StoredWtSignal[]; savedAt: string };
