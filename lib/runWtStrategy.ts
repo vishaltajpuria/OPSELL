@@ -5,6 +5,7 @@ import { getEquityToken, getIndexToken } from "@/lib/nseInstruments";
 import { INDEX_DEFS } from "@/lib/indices";
 import { detectWtSignals, type WtStrategySignal } from "@/lib/wtStrategy";
 import { resolveAtmOption } from "@/lib/atmOption";
+import { isBelowFourHourSupertrend } from "@/lib/fourHourSupertrend";
 import { batchQuote } from "@/lib/quoteBatch";
 import { patchTodayCandle } from "@/lib/candleFreshness";
 import { runRateLimited } from "@/lib/rateLimit";
@@ -15,6 +16,12 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 // with a wide safety margin while staying a lighter fetch than the main
 // strategy's 500.
 const DAILY_LOOKBACK_DAYS = 200;
+// Only needs enough 4H bars to warm up ATR-14 with a comfortable margin
+// (see MIN_4H_BARS in lib/fourHourSupertrend.ts) — far less history than
+// the main strategy's own 4H pass needs for crossover detection
+// (HOURLY_LOOKBACK_DAYS=380 in lib/runDailyStrategy.ts), since this is
+// just a snapshot read of the latest bar's trend, not a lookback scan.
+const FOUR_HOUR_LOOKBACK_DAYS = 90;
 
 function isoDate(d: Date): string {
   return d.toISOString().slice(0, 10);
@@ -32,24 +39,44 @@ function partitionForBatch(stocks: FnoStock[], batchId: BatchId): FnoStock[] {
 }
 
 /**
- * Attaches a representative ATM/ITM option (expiry, strike, live premium,
- * bid/ask spread — see lib/atmOption.ts) to a freshly detected signal,
- * swallowing any failure to a null atmOption rather than losing the WT
- * signal itself: an option chain glitch for one symbol (a stale instrument
- * dump entry, a quote miss) shouldn't cost the whole batch that stock's
- * otherwise-valid signal.
+ * Fetches 60-minute candles for the same instrument (reusing the token
+ * already resolved for the daily candle fetch, no extra lookup) and reads
+ * whether it's currently below its own 4H Supertrend line — see
+ * lib/fourHourSupertrend.ts. Swallows any failure to null, same reasoning
+ * as enrichSignal below: a candle-fetch hiccup for one symbol shouldn't
+ * cost the whole batch that stock's otherwise-valid WT signal.
  */
-async function enrichWithAtmOption(
+async function resolveBelow4HSupertrend(token: number, accessToken: string): Promise<boolean | null> {
+  try {
+    const now = new Date();
+    const to = isoDate(now);
+    const from = isoDate(new Date(now.getTime() - FOUR_HOUR_LOOKBACK_DAYS * DAY_MS));
+    const hourly = await getHistoricalCandles(token, "60minute", from, to, accessToken);
+    return isBelowFourHourSupertrend(hourly);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Attaches a representative ATM/ITM option (expiry, strike, live premium,
+ * bid/ask spread — see lib/atmOption.ts) and the 4H Supertrend read above to
+ * a freshly detected signal, run concurrently since they're independent.
+ * Each swallows its own failure to null rather than losing the WT signal
+ * itself: an option-chain or candle-fetch glitch for one symbol shouldn't
+ * cost the whole batch that stock's otherwise-valid signal.
+ */
+async function enrichSignal(
   symbol: string,
+  token: number,
   signal: WtStrategySignal,
   accessToken: string
 ): Promise<StoredWtSignal> {
-  try {
-    const atmOption = await resolveAtmOption(symbol, signal.entryPrice, signal.direction, accessToken);
-    return { symbol, ...signal, atmOption };
-  } catch {
-    return { symbol, ...signal, atmOption: null };
-  }
+  const [atmOption, belowFourHourSupertrend] = await Promise.all([
+    resolveAtmOption(symbol, signal.entryPrice, signal.direction, accessToken).catch(() => null),
+    resolveBelow4HSupertrend(token, accessToken),
+  ]);
+  return { symbol, ...signal, atmOption, belowFourHourSupertrend };
 }
 
 export type WtStrategyRunResult = {
@@ -62,10 +89,14 @@ export type WtStrategyRunResult = {
 
 /**
  * Daily pass for Strategy Tab 2 — one batch of the full F&O stock list (plus
- * indices, folded into batch A), Daily timeframe only (no 4H). Entirely
- * independent of lib/runDailyStrategy.ts: different signal source
- * (detectWtSignals, not the Supertrend/SMA crossover), different Redis keys
- * (see saveWtSignalBatch), same batching/rate-limit/checkpoint shape reused
+ * indices, folded into batch A). Signal DETECTION runs on the Daily
+ * timeframe only (no 4H crossover scan) via detectWtSignals; a symbol that
+ * qualifies also gets a 4H candle fetch purely to read its current
+ * Supertrend trend (see enrichSignal/resolveBelow4HSupertrend above), an
+ * informational tick, not a second detection pass. Entirely independent of
+ * lib/runDailyStrategy.ts: different signal source (detectWtSignals, not
+ * the Supertrend/SMA crossover), different Redis keys (see
+ * saveWtSignalBatch), same batching/rate-limit/checkpoint shape reused
  * because it already solves the same Vercel-duration and Kite-rate-limit
  * constraints.
  */
@@ -90,7 +121,7 @@ export async function runDailyWtStrategy(accessToken: string, batchId: BatchId):
       const rawCandles = await getHistoricalCandles(token, "day", from, to, accessToken);
       const candles = patchTodayCandle(rawCandles, liveQuotes[`NSE:${symbol}`]);
       for (const signal of detectWtSignals(candles)) {
-        signals.push(await enrichWithAtmOption(symbol, signal, accessToken));
+        signals.push(await enrichSignal(symbol, token, signal, accessToken));
       }
     } catch (err) {
       errors.push(`${symbol}: ${err instanceof Error ? err.message : "failed"}`);
@@ -114,7 +145,7 @@ export async function runDailyWtStrategy(accessToken: string, batchId: BatchId):
         const rawDaily = await getHistoricalCandles(token, "day", from, to, accessToken);
         const daily = patchTodayCandle(rawDaily, indexLiveQuotes[`${def.exchange}:${def.tradingsymbol}`]);
         for (const signal of detectWtSignals(daily)) {
-          signals.push(await enrichWithAtmOption(def.key, signal, accessToken));
+          signals.push(await enrichSignal(def.key, token, signal, accessToken));
         }
       } catch (err) {
         errors.push(`${def.key}: ${err instanceof Error ? err.message : "failed"}`);

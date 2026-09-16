@@ -47,6 +47,21 @@ function doubleWtTick(s: StoredWtSignal) {
   );
 }
 
+// Sky-blue tick, distinct from the amber/violet ticks above — whether price
+// is currently below its own 4H Supertrend line (see
+// lib/fourHourSupertrend.ts), an informational read shown on longs and
+// shorts alike, not a gate: it doesn't touch WT qualification and has
+// nothing to do with the "SMA crossing Supertrend" strategy this tab
+// otherwise excludes entirely.
+function below4hTick(s: StoredWtSignal) {
+  if (!s.belowFourHourSupertrend) return null;
+  return (
+    <span className="text-[9px] font-semibold uppercase text-sky-400" title="Below the 4H Supertrend line">
+      B4H
+    </span>
+  );
+}
+
 // Bid/ask spread as a percentage of the premium itself — a tight spread
 // (small %) means the quoted mid is trustworthy and the contract is liquid
 // enough to actually trade near it; a wide one means the mid is a rougher
@@ -153,8 +168,8 @@ export default async function Strategy2Page() {
     <main className="px-4 pt-6">
       <h1 className="text-xl font-semibold">Strategy Tab 2</h1>
       <p className="mt-1 text-sm text-muted">
-        WT breach is the only filter — Double WT and volume spike are shown as ticks on top, and the Supertrend +
-        SMA crossover strategy plays no part here.
+        WT breach is the only filter — Double WT, volume spike, and being below the 4H Supertrend line are shown as
+        ticks on top, and the Supertrend + SMA crossover strategy plays no part here.
       </p>
 
       <div className="mt-4">
@@ -214,15 +229,16 @@ export default async function Strategy2Page() {
                         <span className="flex shrink-0 gap-1">
                           {volumeTick(s)}
                           {doubleWtTick(s)}
+                          {below4hTick(s)}
                         </span>
                       </div>
                       <p className={`text-[10px] font-semibold uppercase ${s.direction === "short" ? "text-danger" : "text-accent"}`}>
                         {s.direction === "short" ? "Short" : "Long"}
                       </p>
                       <p className="mt-1 text-[11px] text-muted">
-                        Entry {fmt(s.entryPrice)}
+                        LTP {fmt(s.entryPrice)}
                         <br />
-                        WT breach {dateOnly(s.wtBreachDate)} · wt2 {s.wt2AtSignal.toFixed(0)}
+                        WT {s.wt2AtSignal.toFixed(0)}
                         {s.hasDoubleWt && (
                           <>
                             <br />
