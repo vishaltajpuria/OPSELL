@@ -5,7 +5,7 @@ import { getEquityToken, getIndexToken } from "@/lib/nseInstruments";
 import { INDEX_DEFS } from "@/lib/indices";
 import { detectWtSignals, type WtStrategySignal } from "@/lib/wtStrategy";
 import { resolveAtmOption } from "@/lib/atmOption";
-import { isBelowFourHourSupertrend } from "@/lib/fourHourSupertrend";
+import { getFourHourSupertrendTrend } from "@/lib/fourHourSupertrend";
 import { batchQuote } from "@/lib/quoteBatch";
 import { patchTodayCandle } from "@/lib/candleFreshness";
 import { runRateLimited } from "@/lib/rateLimit";
@@ -41,18 +41,18 @@ function partitionForBatch(stocks: FnoStock[], batchId: BatchId): FnoStock[] {
 /**
  * Fetches 60-minute candles for the same instrument (reusing the token
  * already resolved for the daily candle fetch, no extra lookup) and reads
- * whether it's currently below its own 4H Supertrend line — see
- * lib/fourHourSupertrend.ts. Swallows any failure to null, same reasoning
- * as enrichSignal below: a candle-fetch hiccup for one symbol shouldn't
- * cost the whole batch that stock's otherwise-valid WT signal.
+ * its current 4H Supertrend trend — see lib/fourHourSupertrend.ts.
+ * Swallows any failure to null, same reasoning as enrichSignal below: a
+ * candle-fetch hiccup for one symbol shouldn't cost the whole batch that
+ * stock's otherwise-valid WT signal.
  */
-async function resolveBelow4HSupertrend(token: number, accessToken: string): Promise<boolean | null> {
+async function resolveFourHourTrend(token: number, accessToken: string): Promise<"up" | "down" | null> {
   try {
     const now = new Date();
     const to = isoDate(now);
     const from = isoDate(new Date(now.getTime() - FOUR_HOUR_LOOKBACK_DAYS * DAY_MS));
     const hourly = await getHistoricalCandles(token, "60minute", from, to, accessToken);
-    return isBelowFourHourSupertrend(hourly);
+    return getFourHourSupertrendTrend(hourly);
   } catch {
     return null;
   }
@@ -72,11 +72,11 @@ async function enrichSignal(
   signal: WtStrategySignal,
   accessToken: string
 ): Promise<StoredWtSignal> {
-  const [atmOption, belowFourHourSupertrend] = await Promise.all([
+  const [atmOption, fourHourTrend] = await Promise.all([
     resolveAtmOption(symbol, signal.entryPrice, signal.direction, accessToken).catch(() => null),
-    resolveBelow4HSupertrend(token, accessToken),
+    resolveFourHourTrend(token, accessToken),
   ]);
-  return { symbol, ...signal, atmOption, belowFourHourSupertrend };
+  return { symbol, ...signal, atmOption, fourHourTrend };
 }
 
 export type WtStrategyRunResult = {

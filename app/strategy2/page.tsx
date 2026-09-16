@@ -47,17 +47,27 @@ function doubleWtTick(s: StoredWtSignal) {
   );
 }
 
-// Sky-blue tick, distinct from the amber/violet ticks above — whether price
-// is currently below its own 4H Supertrend line (see
-// lib/fourHourSupertrend.ts), an informational read shown on longs and
-// shorts alike, not a gate: it doesn't touch WT qualification and has
-// nothing to do with the "SMA crossing Supertrend" strategy this tab
-// otherwise excludes entirely.
-function below4hTick(s: StoredWtSignal) {
-  if (!s.belowFourHourSupertrend) return null;
+// Whether the 4H Supertrend read (lib/fourHourSupertrend.ts) is the
+// noteworthy one for THIS signal's own direction — a long signal's faster
+// timeframe hasn't turned bullish yet (still "down", B4H), a short's
+// hasn't turned bearish yet (still "up", A4H). Direction-mirrored rather
+// than one fixed condition for both, and shared between the tick below and
+// the ranking's own 4H axis so the two always agree on what counts.
+function matchesFourHourTick(s: StoredWtSignal): boolean {
+  return s.direction === "long" ? s.fourHourTrend === "down" : s.fourHourTrend === "up";
+}
+
+// Sky-blue tick, distinct from the amber/violet ticks above — informational,
+// not a gate: it doesn't touch WT qualification and has nothing to do with
+// the "SMA crossing Supertrend" strategy this tab otherwise excludes
+// entirely.
+function fourHourTick(s: StoredWtSignal) {
+  if (!matchesFourHourTick(s)) return null;
+  const label = s.direction === "long" ? "B4H" : "A4H";
+  const title = s.direction === "long" ? "Below the 4H Supertrend line" : "Above the 4H Supertrend line";
   return (
-    <span className="text-[9px] font-semibold uppercase text-sky-400" title="Below the 4H Supertrend line">
-      B4H
+    <span className="text-[9px] font-semibold uppercase text-sky-400" title={title}>
+      {label}
     </span>
   );
 }
@@ -110,22 +120,27 @@ function percentileRanks(values: number[]): number[] {
   });
 }
 
-// Relative weight of each ranking factor, per request: WT depth dominates,
-// option cheapness is second, gap size a distant third.
-const WT_RANK_WEIGHT = 0.5;
+// Relative weight of each ranking factor, per request: WT depth and option
+// cheapness are co-equal and dominant, gap size a clear third, the 4H
+// Supertrend read a minor tiebreaker-ish factor.
+const WT_RANK_WEIGHT = 0.3;
 const PREMIUM_RANK_WEIGHT = 0.3;
 const GAP_RANK_WEIGHT = 0.2;
+const FOUR_HOUR_RANK_WEIGHT = 0.1;
 
 /**
- * Orders one direction's signals by a blend of three percentile ranks: how
- * deep today's WT breach is (|wt2AtSignal| — further past +-55 ranks
- * higher, 50% weight), how CHEAP the ATM/ITM option is relative to its own
- * strike (premiumPercentOfStrike — lower ranks higher, since the axis is
- * inverted below, 30% weight), and how large the same-direction gap target
- * is (|nextGap.percent|, 20% weight). A stock missing either nextGap or
- * atmOption (no gap nearby, or the option chain lookup failed) ranks at the
- * BOTTOM of that one axis rather than being excluded — same treatment for
- * both, so missing data never accidentally helps a stock's ranking.
+ * Orders one direction's signals by a blend of four factors: how deep
+ * today's WT breach is (|wt2AtSignal| — further past +-55 ranks higher,
+ * 30% weight), how CHEAP the ATM/ITM option is relative to its own strike
+ * (premiumPercentOfStrike — lower ranks higher, since the axis is inverted
+ * below, 30% weight), how large the same-direction gap target is
+ * (|nextGap.percent|, 20% weight), and whether matchesFourHourTick holds —
+ * the B4H/A4H tick above — worth a flat 100/0 rather than a percentile rank
+ * since it's a yes/no read, not a magnitude (10% weight). A stock missing
+ * nextGap or atmOption (no gap nearby, or the option chain lookup failed)
+ * ranks at the BOTTOM of that one axis rather than being excluded — same
+ * treatment throughout, so missing data never accidentally helps a stock's
+ * ranking.
  */
 function rankSignals(signals: StoredWtSignal[]): StoredWtSignal[] {
   if (signals.length <= 1) return signals;
@@ -140,10 +155,15 @@ function rankSignals(signals: StoredWtSignal[]): StoredWtSignal[] {
   const wtRanks = percentileRanks(wtStrength);
   const gapRanks = percentileRanks(gapStrength);
   const premiumRanks = percentileRanks(premiumCost).map((r) => 100 - r);
+  const fourHourScores = signals.map((s) => (matchesFourHourTick(s) ? 100 : 0));
   return signals
     .map((s, i) => ({
       s,
-      score: WT_RANK_WEIGHT * wtRanks[i] + PREMIUM_RANK_WEIGHT * premiumRanks[i] + GAP_RANK_WEIGHT * gapRanks[i],
+      score:
+        WT_RANK_WEIGHT * wtRanks[i] +
+        PREMIUM_RANK_WEIGHT * premiumRanks[i] +
+        GAP_RANK_WEIGHT * gapRanks[i] +
+        FOUR_HOUR_RANK_WEIGHT * fourHourScores[i],
     }))
     .sort((a, b) => b.score - a.score)
     .map((r) => r.s);
@@ -168,8 +188,9 @@ export default async function Strategy2Page() {
     <main className="px-4 pt-6">
       <h1 className="text-xl font-semibold">Strategy Tab 2</h1>
       <p className="mt-1 text-sm text-muted">
-        WT breach is the only filter — Double WT, volume spike, and being below the 4H Supertrend line are shown as
-        ticks on top, and the Supertrend + SMA crossover strategy plays no part here.
+        WT breach is the only filter — Double WT, volume spike, and a same-direction 4H Supertrend read (B4H on
+        longs, A4H on shorts) are shown as ticks on top, and the Supertrend + SMA crossover strategy plays no part
+        here.
       </p>
 
       <div className="mt-4">
@@ -229,7 +250,7 @@ export default async function Strategy2Page() {
                         <span className="flex shrink-0 gap-1">
                           {volumeTick(s)}
                           {doubleWtTick(s)}
-                          {below4hTick(s)}
+                          {fourHourTick(s)}
                         </span>
                       </div>
                       <p className={`text-[10px] font-semibold uppercase ${s.direction === "short" ? "text-danger" : "text-accent"}`}>

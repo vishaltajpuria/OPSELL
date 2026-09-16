@@ -13,18 +13,22 @@ const SUPERTREND_MULTIPLIER = 1;
 const MIN_4H_BARS = 30;
 
 /**
- * Whether price is currently below the 4H Supertrend line — the same
- * "down" trend flag lib/strategy.ts's own crossover detection reads,
- * just checked directly on the latest bar rather than as part of a
- * crossover. Computed on Heikin Ashi 4H candles (resampled from 60-minute —
- * see resampleTo4H), matching how the main strategy computes Supertrend
- * everywhere else in this app.
+ * The current 4H Supertrend trend ("up" = price above the line, "down" =
+ * below it) — the same trend flag lib/strategy.ts's own crossover
+ * detection reads, just checked directly on the latest bar rather than as
+ * part of a crossover. Computed on Heikin Ashi 4H candles (resampled from
+ * 60-minute — see resampleTo4H), matching how the main strategy computes
+ * Supertrend everywhere else in this app.
  *
- * Returns null (not false) when there isn't enough 4H history yet to trust
- * the read — a freshly-listed instrument or a short candle fetch — so a
- * caller can tell "not below" from "unknown" rather than conflating them.
+ * Returns null when there isn't enough 4H history yet to trust the read —
+ * a freshly-listed instrument or a short candle fetch — so a caller can
+ * tell "unknown" apart from either real trend value. Which side of this a
+ * caller treats as noteworthy is direction-dependent (see
+ * app/strategy2/page.tsx's B4H/A4H ticks — "down" is the flag for a long
+ * signal, "up" for a short one), so this returns the raw trend rather than
+ * pre-baking a direction into it.
  */
-export function isBelowFourHourSupertrend(hourlyCandles: Candle[]): boolean | null {
+export function getFourHourSupertrendTrend(hourlyCandles: Candle[]): "up" | "down" | null {
   const fourHour = resampleTo4H(hourlyCandles);
   if (fourHour.length < MIN_4H_BARS) return null;
 
@@ -33,5 +37,5 @@ export function isBelowFourHourSupertrend(hourlyCandles: Candle[]): boolean | nu
   const last = supertrend[supertrend.length - 1];
   if (Number.isNaN(last.value)) return null;
 
-  return last.trend === "down";
+  return last.trend;
 }
