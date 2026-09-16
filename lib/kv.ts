@@ -126,14 +126,13 @@ export async function getLatestSignals(): Promise<LatestSignals | null> {
 // --- Strategy Tab 2 (WT/Double WT + volume, no Supertrend/SMA CROSSOVER at
 // all — see lib/wtStrategy.ts) — a completely separate signal list from the
 // one above, own Redis keys, same batching/merge shape reused as-is.
-// belowFourHourSupertrend is a plain informational read of 4H Supertrend
-// (see lib/fourHourSupertrend.ts), not a crossover trigger — it doesn't
-// touch the "SMA crossing Supertrend" strategy this tab deliberately
-// excludes. ---
+// fourHourTrend is a plain informational read of 4H Supertrend (see
+// lib/fourHourSupertrend.ts), not a crossover trigger — it doesn't touch
+// the "SMA crossing Supertrend" strategy this tab deliberately excludes. ---
 
-// atmOption and belowFourHourSupertrend are both optional (rather than
-// required, matching WtStrategySignal's other fields) because they're
-// resolved asynchronously, separately from detectWtSignals itself — see
+// atmOption and fourHourTrend are both optional (rather than required,
+// matching WtStrategySignal's other fields) because they're resolved
+// asynchronously, separately from detectWtSignals itself — see
 // runDailyWtStrategy in lib/runWtStrategy.ts — and because entries already
 // sitting in Redis from before these fields existed won't have them at
 // all; the strategy2 page treats a missing one as "unavailable" rather
@@ -141,7 +140,7 @@ export async function getLatestSignals(): Promise<LatestSignals | null> {
 export type StoredWtSignal = WtStrategySignal & {
   symbol: string;
   atmOption?: AtmOptionInfo | null;
-  belowFourHourSupertrend?: boolean | null;
+  fourHourTrend?: "up" | "down" | null;
 };
 export type LatestWtSignals = { date: string; runAt: string; signals: StoredWtSignal[] };
 
