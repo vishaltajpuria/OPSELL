@@ -412,18 +412,47 @@ export function markToMarket(
   return { premium, underlyingPrice: spotQ.last_price, underlyingChangeValue, underlyingChangePercent };
 }
 
+// Kite's ohlc.close on an option quote is meant to be its previous trading
+// day's close, but for a thin, wide-spread contract (a monthly, non-ATM
+// strike sitting overnight with barely any resting orders) it can instead
+// reflect a stale or settlement-derived print miles away from anything
+// actually tradeable — NSE/Kite compute SOME closing figure even when the
+// order book barely traded, and that figure has no obligation to sit near
+// today's live price. A referencePremium built on a figure like that
+// produces a "today" swing that isn't a real market move at all, just an
+// artifact of illiquid overnight data — exactly what showed up as a
+// multi-lakh "Today" loss on positions whose actual entry-to-now P&L was a
+// small fraction of that. previousCloseIsPlausible rejects a reference
+// that's more than REFERENCE_SANITY_RATIOx away from today's live premium
+// in either direction — a swing beyond that for a near-the-money monthly
+// option, without a matching circuit-level move in the underlying, is far
+// more likely bad overnight data than a real one-day move.
+const REFERENCE_SANITY_RATIO = 3;
+
+function previousCloseIsPlausible(reference: number, current: number): boolean {
+  if (reference <= 0 || current <= 0) return false;
+  const ratio = reference / current;
+  return ratio >= 1 / REFERENCE_SANITY_RATIO && ratio <= REFERENCE_SANITY_RATIO;
+}
+
 /**
  * Today's ₹ P&L for one open trade — the day's move, not the position's
  * whole-life P&L (which is entryPremium vs. current, already shown
  * separately). If the position was opened today, that IS its whole current
- * unrealized P&L — there's no "yesterday" to measure from. Otherwise it's
- * measured from each leg's previous close (Kite's own ohlc.close on every
- * quote — no extra API call) to its current mid, the standard "day change"
- * definition a broker shows. A position topped up today after being opened
- * on an earlier day is measured uniformly from the earlier reference point
- * across its whole (weighted-average) size — a documented approximation,
- * since per-lot entry dates aren't tracked separately from the single
- * weighted-average entryPremium (see weightedAveragePremium).
+ * unrealized P&L — there's no "yesterday" to measure from, and entryPremium
+ * is a real price we actually paid, so it's trusted unconditionally.
+ * Otherwise it's measured from each leg's previous close (Kite's own
+ * ohlc.close on every quote — no extra API call) to its current mid, the
+ * standard "day change" definition a broker shows — UNLESS that previous
+ * close looks implausible next to today's live premium (see
+ * previousCloseIsPlausible above), in which case this returns null rather
+ * than a confidently wrong number; the caller already treats null the same
+ * as "not refreshed yet" (see PaperTradePositions.tsx). A position topped up
+ * today after being opened on an earlier day is measured uniformly from the
+ * earlier reference point across its whole (weighted-average) size — a
+ * documented approximation, since per-lot entry dates aren't tracked
+ * separately from the single weighted-average entryPremium (see
+ * weightedAveragePremium).
  */
 export function computeTodayPnl(
   trade: Pick<PaperTrade, "mode" | "shortLeg" | "longLeg" | "entryAt" | "entryPremium" | "lots" | "lotSize">,
@@ -437,11 +466,12 @@ export function computeTodayPnl(
 
   const currentPremium = longQ ? quoteMidPrice(shortQ) - quoteMidPrice(longQ) : quoteMidPrice(shortQ);
   const openedToday = trade.entryAt.slice(0, 10) === today.toISOString().slice(0, 10);
-  const referencePremium = openedToday
-    ? trade.entryPremium
-    : longQ
-      ? shortQ.ohlc.close - longQ.ohlc.close
-      : shortQ.ohlc.close;
+  if (openedToday) {
+    return computePnlPerShare(trade.mode, trade.entryPremium, currentPremium) * trade.lots * trade.lotSize;
+  }
+
+  const referencePremium = longQ ? shortQ.ohlc.close - longQ.ohlc.close : shortQ.ohlc.close;
+  if (!previousCloseIsPlausible(referencePremium, currentPremium)) return null;
 
   return computePnlPerShare(trade.mode, referencePremium, currentPremium) * trade.lots * trade.lotSize;
 }
