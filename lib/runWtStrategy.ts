@@ -41,19 +41,29 @@ function partitionForBatch(stocks: FnoStock[], batchId: BatchId): FnoStock[] {
 /**
  * Fetches 60-minute candles for the same instrument (reusing the token
  * already resolved for the daily candle fetch, no extra lookup) and reads
- * its current 4H Supertrend trend — see lib/fourHourSupertrend.ts.
- * Swallows any failure to null, same reasoning as enrichSignal below: a
+ * its current 4H Supertrend trend — see lib/fourHourSupertrend.ts. Swallows
+ * any failure to null rather than losing the WT signal itself (a
  * candle-fetch hiccup for one symbol shouldn't cost the whole batch that
- * stock's otherwise-valid WT signal.
+ * stock's otherwise-valid signal), but records it in `errors` first — a
+ * silently-null 4H read used to be indistinguishable from a genuine "not
+ * below/above the line" read in the UI, which made a stock like ICICIGI
+ * missing its B4H tick for no visible reason impossible to tell apart from
+ * a real non-match.
  */
-async function resolveFourHourTrend(token: number, accessToken: string): Promise<"up" | "down" | null> {
+async function resolveFourHourTrend(
+  symbol: string,
+  token: number,
+  accessToken: string,
+  errors: string[]
+): Promise<"up" | "down" | null> {
   try {
     const now = new Date();
     const to = isoDate(now);
     const from = isoDate(new Date(now.getTime() - FOUR_HOUR_LOOKBACK_DAYS * DAY_MS));
     const hourly = await getHistoricalCandles(token, "60minute", from, to, accessToken);
     return getFourHourSupertrendTrend(hourly);
-  } catch {
+  } catch (err) {
+    errors.push(`${symbol} (4H): ${err instanceof Error ? err.message : "failed"}`);
     return null;
   }
 }
@@ -61,21 +71,36 @@ async function resolveFourHourTrend(token: number, accessToken: string): Promise
 /**
  * Attaches a representative ATM/ITM option (expiry, strike, live premium,
  * bid/ask spread — see lib/atmOption.ts) and the 4H Supertrend read above to
- * a freshly detected signal, run concurrently since they're independent.
- * Each swallows its own failure to null rather than losing the WT signal
- * itself: an option-chain or candle-fetch glitch for one symbol shouldn't
- * cost the whole batch that stock's otherwise-valid signal.
+ * a freshly detected signal. Each swallows its own failure to null rather
+ * than losing the WT signal itself — an option-chain or candle-fetch
+ * glitch for one symbol shouldn't cost the whole batch that stock's
+ * otherwise-valid signal — but logs it to `errors` (see
+ * resolveFourHourTrend above).
+ *
+ * Run SEQUENTIALLY, not concurrently: this whole function already runs
+ * inside runRateLimited's per-symbol callback, which itself budgets for
+ * exactly ONE Kite request in flight per symbol at a time (3 concurrent
+ * symbols/second — see lib/rateLimit.ts) to stay under Kite's 3 req/sec
+ * cap. Firing atmOption's quote call and this 4H candle call concurrently
+ * would silently double that to up to 6 in-flight requests whenever
+ * multiple symbols in the same rate-limited batch have signals — enough to
+ * occasionally trip Kite's rate limit on one of the two calls for one
+ * unlucky symbol, which is exactly what's suspected to have happened here
+ * (the daily fetch that produces the signal itself succeeds, but this
+ * enrichment fetch silently fails and swallows to null).
  */
 async function enrichSignal(
   symbol: string,
   token: number,
   signal: WtStrategySignal,
-  accessToken: string
+  accessToken: string,
+  errors: string[]
 ): Promise<StoredWtSignal> {
-  const [atmOption, fourHourTrend] = await Promise.all([
-    resolveAtmOption(symbol, signal.entryPrice, signal.direction, accessToken).catch(() => null),
-    resolveFourHourTrend(token, accessToken),
-  ]);
+  const atmOption = await resolveAtmOption(symbol, signal.entryPrice, signal.direction, accessToken).catch((err) => {
+    errors.push(`${symbol} (ATM option): ${err instanceof Error ? err.message : "failed"}`);
+    return null;
+  });
+  const fourHourTrend = await resolveFourHourTrend(symbol, token, accessToken, errors);
   return { symbol, ...signal, atmOption, fourHourTrend };
 }
 
@@ -92,7 +117,7 @@ export type WtStrategyRunResult = {
  * indices, folded into batch A). Signal DETECTION runs on the Daily
  * timeframe only (no 4H crossover scan) via detectWtSignals; a symbol that
  * qualifies also gets a 4H candle fetch purely to read its current
- * Supertrend trend (see enrichSignal/resolveBelow4HSupertrend above), an
+ * Supertrend trend (see enrichSignal/resolveFourHourTrend above), an
  * informational tick, not a second detection pass. Entirely independent of
  * lib/runDailyStrategy.ts: different signal source (detectWtSignals, not
  * the Supertrend/SMA crossover), different Redis keys (see
@@ -121,7 +146,7 @@ export async function runDailyWtStrategy(accessToken: string, batchId: BatchId):
       const rawCandles = await getHistoricalCandles(token, "day", from, to, accessToken);
       const candles = patchTodayCandle(rawCandles, liveQuotes[`NSE:${symbol}`]);
       for (const signal of detectWtSignals(candles)) {
-        signals.push(await enrichSignal(symbol, token, signal, accessToken));
+        signals.push(await enrichSignal(symbol, token, signal, accessToken, errors));
       }
     } catch (err) {
       errors.push(`${symbol}: ${err instanceof Error ? err.message : "failed"}`);
@@ -145,7 +170,7 @@ export async function runDailyWtStrategy(accessToken: string, batchId: BatchId):
         const rawDaily = await getHistoricalCandles(token, "day", from, to, accessToken);
         const daily = patchTodayCandle(rawDaily, indexLiveQuotes[`${def.exchange}:${def.tradingsymbol}`]);
         for (const signal of detectWtSignals(daily)) {
-          signals.push(await enrichSignal(def.key, token, signal, accessToken));
+          signals.push(await enrichSignal(def.key, token, signal, accessToken, errors));
         }
       } catch (err) {
         errors.push(`${def.key}: ${err instanceof Error ? err.message : "failed"}`);
