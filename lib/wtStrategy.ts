@@ -47,6 +47,11 @@ export type WtStrategySignal = {
   // oscillator is RIGHT NOW, which is what the gate itself checks and what
   // the page's ranking treats as "WT strength".
   wt2AtSignal: number;
+  // How many daily candles, counting today, the current unbroken excursion
+  // has run — i.e. the same span wtBreachDate marks the start of, expressed
+  // as a count rather than a date. Always >= 1 (today itself, at minimum,
+  // since the gate requires today to already be breached).
+  wtDays: number;
   // Whether wt2 ALSO completed a full breach-recover-breach pattern for
   // this direction within DWT_RECENCY_DAYS — see findDoubleBreachIndex in
   // lib/waveTrend.ts. hasDoubleWt without dwtDate never happens; dwtDate is
@@ -104,6 +109,7 @@ export function detectWtSignals(candles: Candle[]): WtStrategySignal[] {
       direction,
       wtBreachDate: candles[breachStartIdx].date,
       wt2AtSignal: wt2[i],
+      wtDays: i - breachStartIdx + 1,
       hasDoubleWt: doubleIdx !== null,
       dwtDate: doubleIdx !== null ? candles[doubleIdx].date : null,
       entryPrice,
