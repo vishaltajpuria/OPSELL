@@ -121,27 +121,34 @@ function percentileRanks(values: number[]): number[] {
   });
 }
 
-// Relative weight of each ranking factor, per request: WT depth, option
-// cheapness, and gap size are equal-weighted; the 4H Supertrend read stays
-// a minor tiebreaker-ish factor.
-const WT_RANK_WEIGHT = 0.3;
-const PREMIUM_RANK_WEIGHT = 0.3;
-const GAP_RANK_WEIGHT = 0.3;
+// Relative weight of each ranking factor. WT depth, option cheapness, and
+// gap size stay equal-weighted per the last request; wtDays (see
+// lib/wtStrategy.ts — how many daily candles the excursion has run) now
+// carries its own substantial weight rather than being folded into WT
+// depth, since a stock can be freshly breached but very deep, or shallow
+// but breached for weeks — two different things. The 4H Supertrend read
+// stays the smallest, tiebreaker-ish factor.
+const WT_RANK_WEIGHT = 0.25;
+const PREMIUM_RANK_WEIGHT = 0.25;
+const GAP_RANK_WEIGHT = 0.25;
+const WT_DAYS_RANK_WEIGHT = 0.15;
 const FOUR_HOUR_RANK_WEIGHT = 0.1;
 
 /**
- * Orders one direction's signals by a blend of four factors: how deep
+ * Orders one direction's signals by a blend of five factors: how deep
  * today's WT breach is (|wt2AtSignal| — further past +-55 ranks higher,
- * 30% weight), how CHEAP the ATM/ITM option is relative to its own strike
+ * 25% weight), how CHEAP the ATM/ITM option is relative to its own strike
  * (premiumPercentOfStrike — lower ranks higher, since the axis is inverted
- * below, 30% weight), how large the same-direction gap target is
- * (|nextGap.percent|, 30% weight), and whether matchesFourHourTick holds —
- * the B4H/A4H tick above — worth a flat 100/0 rather than a percentile rank
- * since it's a yes/no read, not a magnitude (10% weight). A stock missing
- * nextGap or atmOption (no gap nearby, or the option chain lookup failed)
- * ranks at the BOTTOM of that one axis rather than being excluded — same
- * treatment throughout, so missing data never accidentally helps a stock's
- * ranking.
+ * below, 25% weight), how large the same-direction gap target is
+ * (|nextGap.percent|, 25% weight), how many daily candles the excursion
+ * has run (wtDays — more days ranks higher, a stock that's stayed past
+ * +-55 longer is weighted more, 15% weight), and whether
+ * matchesFourHourTick holds — the B4H/A4H tick above — worth a flat 100/0
+ * rather than a percentile rank since it's a yes/no read, not a magnitude
+ * (10% weight). A stock missing nextGap or atmOption (no gap nearby, or
+ * the option chain lookup failed) ranks at the BOTTOM of that one axis
+ * rather than being excluded — same treatment throughout, so missing data
+ * never accidentally helps a stock's ranking.
  */
 function rankSignals(signals: StoredWtSignal[]): StoredWtSignal[] {
   if (signals.length <= 1) return signals;
@@ -156,6 +163,7 @@ function rankSignals(signals: StoredWtSignal[]): StoredWtSignal[] {
   const wtRanks = percentileRanks(wtStrength);
   const gapRanks = percentileRanks(gapStrength);
   const premiumRanks = percentileRanks(premiumCost).map((r) => 100 - r);
+  const wtDaysRanks = percentileRanks(signals.map((s) => s.wtDays));
   const fourHourScores = signals.map((s) => (matchesFourHourTick(s) ? 100 : 0));
   return signals
     .map((s, i) => ({
@@ -164,6 +172,7 @@ function rankSignals(signals: StoredWtSignal[]): StoredWtSignal[] {
         WT_RANK_WEIGHT * wtRanks[i] +
         PREMIUM_RANK_WEIGHT * premiumRanks[i] +
         GAP_RANK_WEIGHT * gapRanks[i] +
+        WT_DAYS_RANK_WEIGHT * wtDaysRanks[i] +
         FOUR_HOUR_RANK_WEIGHT * fourHourScores[i],
     }))
     .sort((a, b) => b.score - a.score)
