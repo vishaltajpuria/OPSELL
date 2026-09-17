@@ -100,6 +100,7 @@ function isCurrentShape(s: unknown): s is StoredWtSignal {
     (r.direction === "long" || r.direction === "short") &&
     typeof r.wtBreachDate === "string" &&
     typeof r.wt2AtSignal === "number" &&
+    typeof r.wtDays === "number" &&
     typeof r.hasDoubleWt === "boolean" &&
     typeof r.entryPrice === "number" &&
     typeof r.volumeSpike === "object" &&
@@ -259,7 +260,10 @@ export default async function Strategy2Page() {
                       <p className="mt-1 text-[11px] text-muted">
                         LTP {fmt(s.entryPrice)}
                         <br />
-                        WT {s.wt2AtSignal.toFixed(0)}
+                        WT {s.wt2AtSignal.toFixed(0)}{" "}
+                        <span title={`${s.wtDays} daily candle${s.wtDays === 1 ? "" : "s"} spent past +-55, including today`}>
+                          🔥{s.wtDays}
+                        </span>
                         {s.hasDoubleWt && (
                           <>
                             <br />
