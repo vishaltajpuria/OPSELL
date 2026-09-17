@@ -11,11 +11,17 @@ import { patchTodayCandle } from "@/lib/candleFreshness";
 import { runRateLimited } from "@/lib/rateLimit";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-// WT needs far less warm-up than the main strategy's SMA200 (MIN_CANDLES=80
-// in lib/wtStrategy.ts vs. 210) — 200 calendar days comfortably covers that
-// with a wide safety margin while staying a lighter fetch than the main
-// strategy's 500.
-const DAILY_LOOKBACK_DAYS = 200;
+// Daily WT itself only needs MIN_CANDLES=80 (lib/wtStrategy.ts) worth of
+// warm-up, but these same daily candles now also get resampled into WEEKLY
+// bars for the weeklyWtBreach check (also in lib/wtStrategy.ts) — WT's own
+// warm-up (~35 bars) needs ~35 WEEKS of history this time, not 35 days, so
+// the daily fetch has to reach back far enough to produce that many weekly
+// bars with a comfortable margin. 450 calendar days -> ~320 trading days ->
+// ~64 weekly bars, well past the ~35-bar minimum, while still staying
+// lighter than the main strategy's own 500-day daily fetch. Reusing this
+// same fetch (rather than a separate weekly-specific one) avoids adding any
+// new Kite request per symbol at all.
+const DAILY_LOOKBACK_DAYS = 450;
 // Only needs enough 4H bars to warm up ATR-14 with a comfortable margin
 // (see MIN_4H_BARS in lib/fourHourSupertrend.ts) — far less history than
 // the main strategy's own 4H pass needs for crossover detection

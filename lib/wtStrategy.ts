@@ -5,6 +5,7 @@ import {
   findBreachStartIndex,
   findDoubleBreachIndex,
 } from "@/lib/waveTrend";
+import { resampleToWeekly } from "@/lib/indicators";
 import { checkVolumeSpike, type VolumeSpikeCheck } from "@/lib/volumeSpike";
 import { findNextGap, type GapInfo } from "@/lib/gaps";
 
@@ -66,6 +67,16 @@ export type WtStrategySignal = {
   // the wrong side isn't a plausible target for this signal, so it's
   // excluded rather than shown as the "nearest" one regardless of side.
   nextGap: GapInfo | null;
+  // Whether the SAME-direction WT threshold is ALSO breached on the WEEKLY
+  // chart (resampled from these same daily candles — see
+  // resampleToWeekly) — a higher-timeframe confirmation on top of the
+  // daily-only gate above. False (not just unconfirmed) when there isn't
+  // enough weekly history yet for a valid reading, same as any other
+  // not-yet-warmed-up indicator value. This is a HARD override in Strategy
+  // Tab 2's ranking (app/strategy2/page.tsx's rankSignals) — a stock with
+  // this true is placed ahead of every other stock regardless of its
+  // weighted score, not just nudged by one.
+  weeklyWtBreach: boolean;
 };
 
 /**
@@ -91,6 +102,13 @@ export function detectWtSignals(candles: Candle[]): WtStrategySignal[] {
   const i = candles.length - 1;
   const entryPrice = candles[i].close;
 
+  // Computed once, off the SAME daily candles already fetched for the
+  // daily gate above — no extra Kite call needed. Whether it's warmed up
+  // enough for a valid reading depends on how much daily history the
+  // caller fetched (see DAILY_LOOKBACK_DAYS in lib/runWtStrategy.ts).
+  const weeklyWt2 = computeWaveTrend(resampleToWeekly(candles)).wt2;
+  const latestWeeklyWt2 = weeklyWt2[weeklyWt2.length - 1];
+
   const signals: WtStrategySignal[] = [];
   for (const direction of ["long", "short"] as const) {
     const wtIdx = findThresholdBreachIndex(wt2, i, i, direction, WT_THRESHOLD); // gate: today only
@@ -104,6 +122,9 @@ export function detectWtSignals(candles: Candle[]): WtStrategySignal[] {
 
     const doubleIdx = findDoubleBreachIndex(wt2, i, DWT_RECENCY_DAYS, direction, WT_THRESHOLD, DWT_RECOVERY_LEVEL);
     const gapDirection = direction === "long" ? "up" : "down";
+    const weeklyWtBreach =
+      !Number.isNaN(latestWeeklyWt2) &&
+      (direction === "long" ? latestWeeklyWt2 <= -WT_THRESHOLD : latestWeeklyWt2 >= WT_THRESHOLD);
 
     signals.push({
       direction,
@@ -115,6 +136,7 @@ export function detectWtSignals(candles: Candle[]): WtStrategySignal[] {
       entryPrice,
       volumeSpike: checkVolumeSpike(candles, breachStartIdx),
       nextGap: findNextGap(candles, entryPrice, 20, gapDirection),
+      weeklyWtBreach,
     });
   }
   return signals;
