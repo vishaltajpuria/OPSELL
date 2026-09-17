@@ -219,3 +219,47 @@ export function resampleTo4H(hourly: Candle[]): Candle[] {
 export function resampleTo2H(hourly: Candle[]): Candle[] {
   return resampleToNHour(hourly, 2);
 }
+
+// The Monday (UTC calendar date) of the week containing this candle's date
+// — used to bucket daily candles into weekly bars without requiring Monday
+// itself to actually be a trading day (a Monday holiday still buckets
+// correctly into that same week via Tuesday's date).
+function mondayOfWeek(dateIso: string): string {
+  const d = new Date(dateIso.slice(0, 10) + "T00:00:00Z");
+  const day = d.getUTCDay(); // 0=Sun, 1=Mon, ..., 6=Sat
+  const diffToMonday = day === 0 ? -6 : 1 - day;
+  d.setUTCDate(d.getUTCDate() + diffToMonday);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Resamples daily candles into weekly bars, anchored to the calendar week
+ * (Monday-Sunday) each date falls in — a week's open is its first actual
+ * trading day's open, close is its last trading day's close, matching how
+ * charting platforms build a weekly candle rather than requiring exactly 5
+ * trading days per bucket (a holiday-shortened week still forms one
+ * correctly-dated weekly bar, just from fewer daily candles).
+ */
+export function resampleToWeekly(daily: Candle[]): Candle[] {
+  const byWeek = new Map<string, Candle[]>();
+  for (const c of daily) {
+    const weekKey = mondayOfWeek(c.date);
+    const arr = byWeek.get(weekKey) ?? [];
+    arr.push(c);
+    byWeek.set(weekKey, arr);
+  }
+
+  return Array.from(byWeek.keys())
+    .sort()
+    .map((weekKey) => {
+      const chunk = byWeek.get(weekKey)!;
+      return {
+        date: chunk[0].date,
+        open: chunk[0].open,
+        high: Math.max(...chunk.map((c) => c.high)),
+        low: Math.min(...chunk.map((c) => c.low)),
+        close: chunk[chunk.length - 1].close,
+        volume: chunk.reduce((sum, c) => sum + c.volume, 0),
+      };
+    });
+}

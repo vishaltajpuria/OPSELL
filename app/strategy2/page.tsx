@@ -72,6 +72,19 @@ function fourHourTick(s: StoredWtSignal) {
   );
 }
 
+// Crown, not a small text tick like the others — this isn't just another
+// informational badge, it's why a stock jumped to the very top of its
+// list (see rankSignals' hard override below), so it deliberately reads
+// differently from Vol/DWT/B4H-A4H.
+function weeklyWtTick(s: StoredWtSignal) {
+  if (!s.weeklyWtBreach) return null;
+  return (
+    <span className="mr-1" title="WT also beyond +-55 on the weekly chart — ranked to the top">
+      👑
+    </span>
+  );
+}
+
 // Bid/ask spread as a percentage of the premium itself — a tight spread
 // (small %) means the quoted mid is trustworthy and the contract is liquid
 // enough to actually trade near it; a wide one means the mid is a rougher
@@ -104,7 +117,8 @@ function isCurrentShape(s: unknown): s is StoredWtSignal {
     typeof r.hasDoubleWt === "boolean" &&
     typeof r.entryPrice === "number" &&
     typeof r.volumeSpike === "object" &&
-    r.volumeSpike !== null
+    r.volumeSpike !== null &&
+    typeof r.weeklyWtBreach === "boolean"
   );
 }
 
@@ -149,6 +163,13 @@ const FOUR_HOUR_RANK_WEIGHT = 0.1;
  * the option chain lookup failed) ranks at the BOTTOM of that one axis
  * rather than being excluded — same treatment throughout, so missing data
  * never accidentally helps a stock's ranking.
+ *
+ * weeklyWtBreach (the 👑 tick) sits OUTSIDE this weighted blend entirely —
+ * it's a hard override, not one more axis: every stock with it true is
+ * placed ahead of every stock without it, full stop, and only THEN does
+ * the weighted score above decide ordering within each of those two
+ * groups. "Comes on top of all others" means exactly that, not "gets a
+ * few more points."
  */
 function rankSignals(signals: StoredWtSignal[]): StoredWtSignal[] {
   if (signals.length <= 1) return signals;
@@ -165,18 +186,19 @@ function rankSignals(signals: StoredWtSignal[]): StoredWtSignal[] {
   const premiumRanks = percentileRanks(premiumCost).map((r) => 100 - r);
   const wtDaysRanks = percentileRanks(signals.map((s) => s.wtDays));
   const fourHourScores = signals.map((s) => (matchesFourHourTick(s) ? 100 : 0));
-  return signals
-    .map((s, i) => ({
-      s,
-      score:
-        WT_RANK_WEIGHT * wtRanks[i] +
-        PREMIUM_RANK_WEIGHT * premiumRanks[i] +
-        GAP_RANK_WEIGHT * gapRanks[i] +
-        WT_DAYS_RANK_WEIGHT * wtDaysRanks[i] +
-        FOUR_HOUR_RANK_WEIGHT * fourHourScores[i],
-    }))
-    .sort((a, b) => b.score - a.score)
-    .map((r) => r.s);
+  const scored = signals.map((s, i) => ({
+    s,
+    score:
+      WT_RANK_WEIGHT * wtRanks[i] +
+      PREMIUM_RANK_WEIGHT * premiumRanks[i] +
+      GAP_RANK_WEIGHT * gapRanks[i] +
+      WT_DAYS_RANK_WEIGHT * wtDaysRanks[i] +
+      FOUR_HOUR_RANK_WEIGHT * fourHourScores[i],
+  }));
+  const byScoreDesc = (a: (typeof scored)[number], b: (typeof scored)[number]) => b.score - a.score;
+  const weeklyBreach = scored.filter((r) => r.s.weeklyWtBreach).sort(byScoreDesc);
+  const rest = scored.filter((r) => !r.s.weeklyWtBreach).sort(byScoreDesc);
+  return [...weeklyBreach, ...rest].map((r) => r.s);
 }
 
 export default async function Strategy2Page() {
@@ -199,8 +221,8 @@ export default async function Strategy2Page() {
       <h1 className="text-xl font-semibold">Strategy Tab 2</h1>
       <p className="mt-1 text-sm text-muted">
         WT breach is the only filter — Double WT, volume spike, and a same-direction 4H Supertrend read (B4H on
-        longs, A4H on shorts) are shown as ticks on top, and the Supertrend + SMA crossover strategy plays no part
-        here.
+        longs, A4H on shorts) are shown as ticks on top, a stock also breaching WT on the weekly chart (👑) is ranked
+        to the very top of its list, and the Supertrend + SMA crossover strategy plays no part here.
       </p>
 
       <div className="mt-4">
@@ -256,7 +278,10 @@ export default async function Strategy2Page() {
                   {rows.map((s, i) => (
                     <li key={`${s.symbol}-${i}`} className="rounded-lg border border-border bg-surface p-2.5">
                       <div className="flex items-center justify-between gap-1">
-                        <p className="truncate text-xs font-medium">{s.symbol}</p>
+                        <p className="truncate text-xs font-medium">
+                          {weeklyWtTick(s)}
+                          {s.symbol}
+                        </p>
                         <span className="flex shrink-0 gap-1">
                           {volumeTick(s)}
                           {doubleWtTick(s)}
