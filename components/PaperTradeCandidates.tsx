@@ -240,9 +240,15 @@ export default function PaperTradeCandidates({
   // Re-prices the plan for a specific strike (buy mode) or pair of strikes
   // (sell mode) the user picked — still a live server-side quote, same as
   // the initial preview, just pinned to the chosen leg(s) instead of the
-  // auto-picked one(s).
+  // auto-picked one(s). Carries the CURRENTLY-active expiry forward
+  // explicitly (expiry + expiryMode) — without this, the server's preview
+  // route defaults expiryMode to "monthly" and manualExpiry to undefined
+  // whenever they're omitted, so picking a strike while a weekly (or any
+  // manually-chosen) expiry was active would silently reprice against the
+  // monthly contract instead, flipping the expiry shown out from under you.
   async function repriceWithStrikes(shortStrike: number, longStrike?: number) {
-    if (!preview) return;
+    if (!preview || !preview.plan || preview.plan.isIncrease) return;
+    const { expiry, expiryMode } = preview.plan;
     setPreview({ ...preview, status: "loading" });
     try {
       const res = await fetch("/api/papertrade/preview", {
@@ -254,6 +260,8 @@ export default function PaperTradeCandidates({
           mode: preview.mode,
           shortStrike,
           ...(longStrike !== undefined ? { longStrike } : {}),
+          expiry,
+          expiryMode,
         }),
       });
       const data = await res.json();
