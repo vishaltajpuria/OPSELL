@@ -72,6 +72,30 @@ function fourHourTick(s: StoredWtSignal) {
   );
 }
 
+// Same direction-mirroring as matchesFourHourTick, just reading the DAILY
+// Supertrend trend instead (lib/dailySupertrend.ts) — a long signal's own
+// daily chart hasn't turned bullish yet (still "down", BD), a short's
+// hasn't turned bearish yet (still "up", AD). Shared between the tick
+// below and rankSignals' tiering so the two always agree on what counts.
+function matchesDailyTick(s: StoredWtSignal): boolean {
+  return s.direction === "long" ? s.dailySupertrendTrend === "down" : s.dailySupertrendTrend === "up";
+}
+
+// Fuchsia tick, distinct from the sky-blue 4H one — same informational
+// role, just on the daily timeframe. Doesn't touch WT qualification and
+// has nothing to do with the "SMA crossing Supertrend" strategy this tab
+// otherwise excludes entirely.
+function dailyTick(s: StoredWtSignal) {
+  if (!matchesDailyTick(s)) return null;
+  const label = s.direction === "long" ? "BD" : "AD";
+  const title = s.direction === "long" ? "Below the daily Supertrend line" : "Above the daily Supertrend line";
+  return (
+    <span className="text-[9px] font-semibold uppercase text-fuchsia-400" title={title}>
+      {label}
+    </span>
+  );
+}
+
 // Crown, not a small text tick like the others — this isn't just another
 // informational badge, it's why a stock jumped to the very top of its
 // list (see rankSignals' hard override below), so it deliberately reads
@@ -118,7 +142,8 @@ function isCurrentShape(s: unknown): s is StoredWtSignal {
     typeof r.entryPrice === "number" &&
     typeof r.volumeSpike === "object" &&
     r.volumeSpike !== null &&
-    typeof r.weeklyWtBreach === "boolean"
+    typeof r.weeklyWtBreach === "boolean" &&
+    (r.dailySupertrendTrend === "up" || r.dailySupertrendTrend === "down" || r.dailySupertrendTrend === null)
   );
 }
 
@@ -170,6 +195,18 @@ const FOUR_HOUR_RANK_WEIGHT = 0.1;
  * the weighted score above decide ordering within each of those two
  * groups. "Comes on top of all others" means exactly that, not "gets a
  * few more points."
+ *
+ * Within the non-👑 group, matchesFourHourTick (B4H/A4H) and
+ * matchesDailyTick (BD/AD) ALSO form their own tiering on top of the
+ * weighted score, per request: stocks matching BOTH rank above stocks
+ * matching only B4H/A4H, which rank above stocks matching only BD/AD,
+ * which rank above stocks matching neither — the weighted score above only
+ * breaks ties WITHIN each of those four tiers, same "hard override, not
+ * another axis" treatment as weeklyWtBreach. (FOUR_HOUR_RANK_WEIGHT in the
+ * blend above is harmless here, not redundant: it's the same value for
+ * every member of a given tier, since tier membership already fixes
+ * matchesFourHourTick one way or the other, so it never un-does the
+ * tiering — it only still matters for breaking ties within a tier.)
  */
 function rankSignals(signals: StoredWtSignal[]): StoredWtSignal[] {
   if (signals.length <= 1) return signals;
@@ -197,8 +234,17 @@ function rankSignals(signals: StoredWtSignal[]): StoredWtSignal[] {
   }));
   const byScoreDesc = (a: (typeof scored)[number], b: (typeof scored)[number]) => b.score - a.score;
   const weeklyBreach = scored.filter((r) => r.s.weeklyWtBreach).sort(byScoreDesc);
-  const rest = scored.filter((r) => !r.s.weeklyWtBreach).sort(byScoreDesc);
-  return [...weeklyBreach, ...rest].map((r) => r.s);
+  const rest = scored.filter((r) => !r.s.weeklyWtBreach);
+
+  // "Rank on the basis of B4H and BD together, then B4H, then BD" — four
+  // non-overlapping tiers, each internally still ordered by the weighted
+  // score above.
+  const both = rest.filter((r) => matchesFourHourTick(r.s) && matchesDailyTick(r.s)).sort(byScoreDesc);
+  const fourHourOnly = rest.filter((r) => matchesFourHourTick(r.s) && !matchesDailyTick(r.s)).sort(byScoreDesc);
+  const dailyOnly = rest.filter((r) => !matchesFourHourTick(r.s) && matchesDailyTick(r.s)).sort(byScoreDesc);
+  const neither = rest.filter((r) => !matchesFourHourTick(r.s) && !matchesDailyTick(r.s)).sort(byScoreDesc);
+
+  return [...weeklyBreach, ...both, ...fourHourOnly, ...dailyOnly, ...neither].map((r) => r.s);
 }
 
 export default async function Strategy2Page() {
@@ -220,9 +266,11 @@ export default async function Strategy2Page() {
     <main className="px-4 pt-6">
       <h1 className="text-xl font-semibold">Strategy Tab 2</h1>
       <p className="mt-1 text-sm text-muted">
-        WT breach is the only filter — Double WT, volume spike, and a same-direction 4H Supertrend read (B4H on
-        longs, A4H on shorts) are shown as ticks on top, a stock also breaching WT on the weekly chart (👑) is ranked
-        to the very top of its list, and the Supertrend + SMA crossover strategy plays no part here.
+        WT breach is the only filter — Double WT, volume spike, a same-direction 4H Supertrend read (B4H on longs,
+        A4H on shorts), and a same-direction daily Supertrend read (BD on longs, AD on shorts) are shown as ticks on
+        top. A stock also breaching WT on the weekly chart (👑) is ranked to the very top of its list; among the
+        rest, matching both B4H/A4H and BD/AD ranks above matching just one, which ranks above matching neither. The
+        Supertrend + SMA crossover strategy plays no part here.
       </p>
 
       <div className="mt-4">
@@ -286,6 +334,7 @@ export default async function Strategy2Page() {
                           {volumeTick(s)}
                           {doubleWtTick(s)}
                           {fourHourTick(s)}
+                          {dailyTick(s)}
                         </span>
                       </div>
                       <p className={`text-[10px] font-semibold uppercase ${s.direction === "short" ? "text-danger" : "text-accent"}`}>
