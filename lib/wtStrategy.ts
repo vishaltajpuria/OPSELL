@@ -6,6 +6,7 @@ import {
   findDoubleBreachIndex,
 } from "@/lib/waveTrend";
 import { resampleToWeekly } from "@/lib/indicators";
+import { getDailySupertrendTrend } from "@/lib/dailySupertrend";
 import { checkVolumeSpike, type VolumeSpikeCheck } from "@/lib/volumeSpike";
 import { findNextGap, type GapInfo } from "@/lib/gaps";
 
@@ -77,6 +78,13 @@ export type WtStrategySignal = {
   // this true is placed ahead of every other stock regardless of its
   // weighted score, not just nudged by one.
   weeklyWtBreach: boolean;
+  // The current DAILY Supertrend trend (see lib/dailySupertrend.ts) — the
+  // raw trend, not pre-matched to direction (same shape as fourHourTrend
+  // below); app/strategy2/page.tsx's BD/AD ticks and ranking decide which
+  // side counts as noteworthy for a given signal's own direction. Computed
+  // directly off these same daily candles, no extra fetch needed, unlike
+  // fourHourTrend below.
+  dailySupertrendTrend: "up" | "down" | null;
 };
 
 /**
@@ -109,6 +117,11 @@ export function detectWtSignals(candles: Candle[]): WtStrategySignal[] {
   const weeklyWt2 = computeWaveTrend(resampleToWeekly(candles)).wt2;
   const latestWeeklyWt2 = weeklyWt2[weeklyWt2.length - 1];
 
+  // Also computed once off these same daily candles — no extra fetch,
+  // see lib/dailySupertrend.ts. Direction-independent (a raw trend read),
+  // same as weeklyWt2 above.
+  const dailySupertrendTrend = getDailySupertrendTrend(candles);
+
   const signals: WtStrategySignal[] = [];
   for (const direction of ["long", "short"] as const) {
     const wtIdx = findThresholdBreachIndex(wt2, i, i, direction, WT_THRESHOLD); // gate: today only
@@ -137,6 +150,7 @@ export function detectWtSignals(candles: Candle[]): WtStrategySignal[] {
       volumeSpike: checkVolumeSpike(candles, breachStartIdx),
       nextGap: findNextGap(candles, entryPrice, 20, gapDirection),
       weeklyWtBreach,
+      dailySupertrendTrend,
     });
   }
   return signals;
