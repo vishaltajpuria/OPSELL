@@ -14,12 +14,15 @@ const MARKET_CLOSE_MINUTES = 15 * 60 + 40; // 15:40
  * listed by NSE and doesn't need to be here either, since getMarketStatus
  * already checks weekday first.
  *
- * November 9, 2026 (Diwali Laxmi Pujan) is a full-day trading holiday too,
- * distinct from the Balipratipada holiday on Nov 10 below — NSE runs a
- * separate, symbolic one-hour "Muhurat Trading" session that evening,
- * outside MARKET_OPEN_MINUTES/MARKET_CLOSE_MINUTES above; this module
- * doesn't special-case that session, so paper trading stays blocked all day
- * Nov 9 including during Muhurat trading.
+ * Diwali 2026: Laxmi Pujan itself falls on Sunday Nov 8 — already a
+ * non-trading weekend day, so it needs no separate entry here, and NSE's
+ * evening Muhurat Trading session that day doesn't close the following
+ * business day. Nov 9 (Monday) is confirmed a normal trading day by
+ * multiple broker-published 2026 holiday calendars (ICICI Direct, Bajaj
+ * Broking, Kotak Neo, Angel One) — an earlier version of this list wrongly
+ * included it as a holiday, which is what caused paper trading to be
+ * blocked on a day markets were actually open. The real Diwali market
+ * closure is Balipratipada on Tuesday Nov 10, listed below.
  *
  * Update this list from NSE's official holiday calendar at the start of
  * each year (nseindia.com → Holidays, or the equivalent list in Kite/Console).
@@ -39,7 +42,6 @@ export const NSE_HOLIDAYS: Record<string, string[]> = {
     "2026-09-14", // Ganesh Chaturthi
     "2026-10-02", // Mahatma Gandhi Jayanti
     "2026-10-20", // Dussehra
-    "2026-11-09", // Diwali Laxmi Pujan (Muhurat Trading evening session, still a holiday for normal hours)
     "2026-11-10", // Diwali Balipratipada
     "2026-11-24", // Prakash Gurpurb Sri Guru Nanak Dev
     "2026-12-25", // Christmas
