@@ -7,6 +7,7 @@ import {
 } from "@/lib/waveTrend";
 import { resampleToWeekly } from "@/lib/indicators";
 import { getDailySupertrendTrend } from "@/lib/dailySupertrend";
+import { getWeeklySupertrendTrend } from "@/lib/weeklySupertrend";
 import { checkVolumeSpike, type VolumeSpikeCheck } from "@/lib/volumeSpike";
 import { findNextGap, type GapInfo } from "@/lib/gaps";
 
@@ -85,6 +86,10 @@ export type WtStrategySignal = {
   // directly off these same daily candles, no extra fetch needed, unlike
   // fourHourTrend below.
   dailySupertrendTrend: "up" | "down" | null;
+  // The current WEEKLY Supertrend trend (see lib/weeklySupertrend.ts) —
+  // same shape and reasoning as dailySupertrendTrend above, just resampled
+  // to weekly bars (reusing resampleToWeekly, same as weeklyWtBreach).
+  weeklySupertrendTrend: "up" | "down" | null;
 };
 
 /**
@@ -121,6 +126,7 @@ export function detectWtSignals(candles: Candle[]): WtStrategySignal[] {
   // see lib/dailySupertrend.ts. Direction-independent (a raw trend read),
   // same as weeklyWt2 above.
   const dailySupertrendTrend = getDailySupertrendTrend(candles);
+  const weeklySupertrendTrend = getWeeklySupertrendTrend(candles);
 
   const signals: WtStrategySignal[] = [];
   for (const direction of ["long", "short"] as const) {
@@ -151,6 +157,7 @@ export function detectWtSignals(candles: Candle[]): WtStrategySignal[] {
       nextGap: findNextGap(candles, entryPrice, 20, gapDirection),
       weeklyWtBreach,
       dailySupertrendTrend,
+      weeklySupertrendTrend,
     });
   }
   return signals;
