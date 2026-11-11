@@ -96,6 +96,33 @@ function dailyTick(s: StoredWtSignal) {
   );
 }
 
+// Same direction-mirroring again, reading the WEEKLY Supertrend trend
+// (lib/weeklySupertrend.ts) instead — a long signal's own weekly chart
+// hasn't turned bullish yet (still "down", BW), a short's hasn't turned
+// bearish yet (still "up", AW). Named distinctly from weeklyWtBreach/
+// weeklyWtTick above (👑) — that's the WaveTrend oscillator breaching on
+// the weekly chart, a completely different check from this Supertrend
+// trend read; both happen to use the same resampled weekly bars, nothing
+// more.
+function matchesWeeklySupertrendTick(s: StoredWtSignal): boolean {
+  return s.direction === "long" ? s.weeklySupertrendTrend === "down" : s.weeklySupertrendTrend === "up";
+}
+
+// Lime tick, distinct from amber/violet/sky/fuchsia above — same
+// informational role, just on the weekly timeframe. Doesn't touch WT
+// qualification and has nothing to do with the "SMA crossing Supertrend"
+// strategy this tab otherwise excludes entirely.
+function weeklySupertrendTick(s: StoredWtSignal) {
+  if (!matchesWeeklySupertrendTick(s)) return null;
+  const label = s.direction === "long" ? "BW" : "AW";
+  const title = s.direction === "long" ? "Below the weekly Supertrend line" : "Above the weekly Supertrend line";
+  return (
+    <span className="text-[9px] font-semibold uppercase text-lime-400" title={title}>
+      {label}
+    </span>
+  );
+}
+
 // Crown, not a small text tick like the others — this isn't just another
 // informational badge, it's why a stock jumped to the very top of its
 // list (see rankSignals' hard override below), so it deliberately reads
@@ -143,7 +170,8 @@ function isCurrentShape(s: unknown): s is StoredWtSignal {
     typeof r.volumeSpike === "object" &&
     r.volumeSpike !== null &&
     typeof r.weeklyWtBreach === "boolean" &&
-    (r.dailySupertrendTrend === "up" || r.dailySupertrendTrend === "down" || r.dailySupertrendTrend === null)
+    (r.dailySupertrendTrend === "up" || r.dailySupertrendTrend === "down" || r.dailySupertrendTrend === null) &&
+    (r.weeklySupertrendTrend === "up" || r.weeklySupertrendTrend === "down" || r.weeklySupertrendTrend === null)
   );
 }
 
@@ -267,10 +295,11 @@ export default async function Strategy2Page() {
       <h1 className="text-xl font-semibold">Strategy Tab 2</h1>
       <p className="mt-1 text-sm text-muted">
         WT breach is the only filter — Double WT, volume spike, a same-direction 4H Supertrend read (B4H on longs,
-        A4H on shorts), and a same-direction daily Supertrend read (BD on longs, AD on shorts) are shown as ticks on
-        top. A stock also breaching WT on the weekly chart (👑) is ranked to the very top of its list; among the
-        rest, matching both B4H/A4H and BD/AD ranks above matching just one, which ranks above matching neither. The
-        Supertrend + SMA crossover strategy plays no part here.
+        A4H on shorts), a same-direction daily Supertrend read (BD on longs, AD on shorts), and a same-direction
+        weekly Supertrend read (BW on longs, AW on shorts) are shown as ticks on top. A stock also breaching WT on
+        the weekly chart (👑) is ranked to the very top of its list; among the rest, matching both B4H/A4H and BD/AD
+        ranks above matching just one, which ranks above matching neither. The Supertrend + SMA crossover strategy
+        plays no part here.
       </p>
 
       <div className="mt-4">
@@ -335,6 +364,7 @@ export default async function Strategy2Page() {
                           {doubleWtTick(s)}
                           {fourHourTick(s)}
                           {dailyTick(s)}
+                          {weeklySupertrendTick(s)}
                         </span>
                       </div>
                       <p className={`text-[10px] font-semibold uppercase ${s.direction === "short" ? "text-danger" : "text-accent"}`}>
