@@ -16,7 +16,7 @@ export default function BottomNav() {
   const pathname = usePathname();
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-50 border-t border-border bg-surface safe-bottom">
+    <nav className="z-50 shrink-0 border-t border-border bg-surface safe-bottom">
       <div className="mx-auto flex max-w-md">
         {TABS.map((tab) => {
           const active = pathname === tab.href || pathname?.startsWith(tab.href + "/");
