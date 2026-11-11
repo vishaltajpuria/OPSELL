@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import BottomNav from "@/components/BottomNav";
+import ScrollArea from "@/components/ScrollArea";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -28,9 +29,11 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body className="safe-top">
-        <div className="mx-auto max-w-md pb-20">{children}</div>
-        <BottomNav />
+      <body>
+        <div className="app-shell safe-top">
+          <ScrollArea>{children}</ScrollArea>
+          <BottomNav />
+        </div>
       </body>
     </html>
   );

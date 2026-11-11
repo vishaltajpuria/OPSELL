@@ -6,6 +6,27 @@ html,
 body {
   background-color: #0b0f14;
   color: #e6edf3;
+  /* The document itself never scrolls; only .app-scroll does. This stops
+     iOS from bouncing the whole page (and the bottom nav with it). */
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+/* App shell: content area on top, bottom nav pinned below it. */
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  height: 100dvh;
+}
+
+.app-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 .safe-bottom {
