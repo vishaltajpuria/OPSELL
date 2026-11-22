@@ -5,6 +5,7 @@ import type { VolumeSpikeCheck } from "@/lib/volumeSpike";
 import type { WaveTrendCheck, DoubleWaveTrendCheck } from "@/lib/waveTrend";
 import type { WtStrategySignal } from "@/lib/wtStrategy";
 import type { AtmOptionInfo } from "@/lib/atmOption";
+import type { Strategy3Signal } from "@/lib/strategy3";
 
 let client: Redis | null = null;
 
@@ -170,6 +171,54 @@ export async function saveWtSignalBatch(dateKey: string, batchId: BatchId, signa
 
 export async function getLatestWtSignals(): Promise<LatestWtSignals | null> {
   return (await getRedis().get<LatestWtSignals>("wtsignals:latest")) ?? null;
+}
+
+// --- Strategy Tab 3 (triple-timeframe Supertrend alignment — weekly,
+// daily, AND 4H all agree — see lib/strategy3.ts) — a third, entirely
+// separate signal list: no WaveTrend, no SMA crossover, just the
+// Supertrend reads lib/dailySupertrend.ts/lib/weeklySupertrend.ts/
+// lib/fourHourSupertrend.ts already compute for Strategy Tab 2's own
+// B4H/BD/BW ticks, just required to agree across all three at once here
+// instead of shown as optional ticks. Own Redis keys, same
+// batching/merge shape reused as-is. ---
+
+// atmOption and volumeAccumulation are both optional, same reasoning as
+// StoredWtSignal's own atmOption: resolved asynchronously, separately from
+// detectStrategy3Signal itself (see lib/runStrategy3.ts), so an entry
+// fresh out of that function won't have them yet, and a resolution
+// failure for one stock leaves them null rather than losing the signal.
+export type StoredStrategy3Signal = Strategy3Signal & {
+  symbol: string;
+  atmOption?: AtmOptionInfo | null;
+};
+export type LatestStrategy3Signals = { date: string; runAt: string; signals: StoredStrategy3Signal[] };
+
+type Strategy3StoredBatchPayload = { signals: StoredStrategy3Signal[]; savedAt: string };
+
+function strategy3BatchKey(dateKey: string, batchId: BatchId): string {
+  return `strategy3:${dateKey}:${batchId}`;
+}
+
+async function republishStrategy3Merged(dateKey: string): Promise<void> {
+  const redis = getRedis();
+  const keys = BATCH_IDS.map((b) => strategy3BatchKey(dateKey, b));
+  const batches = await Promise.all(keys.map((k) => redis.get<Strategy3StoredBatchPayload>(k)));
+  const signals = batches.flatMap((b) => b?.signals ?? []);
+  const payload: LatestStrategy3Signals = { date: dateKey, runAt: new Date().toISOString(), signals };
+  await redis.set(`strategy3:${dateKey}`, payload);
+  await redis.set("strategy3:latest", payload);
+}
+
+/** Same per-batch-key-then-republish shape as saveSignalBatch/saveWtSignalBatch above. */
+export async function saveStrategy3Batch(dateKey: string, batchId: BatchId, signals: StoredStrategy3Signal[]): Promise<void> {
+  const redis = getRedis();
+  const payload: Strategy3StoredBatchPayload = { signals, savedAt: new Date().toISOString() };
+  await redis.set(strategy3BatchKey(dateKey, batchId), payload);
+  await republishStrategy3Merged(dateKey);
+}
+
+export async function getLatestStrategy3Signals(): Promise<LatestStrategy3Signals | null> {
+  return (await getRedis().get<LatestStrategy3Signals>("strategy3:latest")) ?? null;
 }
 
 export type PaperTradeLeg = { tradingsymbol: string; strike: number; optionType: "CE" | "PE" };
