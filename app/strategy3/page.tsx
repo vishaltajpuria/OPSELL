@@ -176,32 +176,30 @@ export default async function Strategy3Page() {
                   {rows.length === 0 && <li className="text-xs text-muted">No signals</li>}
                   {rows.map((s, i) => (
                     <li key={`${s.symbol}-${i}`} className="rounded-lg border border-border bg-surface p-2.5">
-                      <div className="flex items-center justify-between gap-1">
-                        <p className="truncate text-xs font-medium">{s.symbol}</p>
-                        <span className="flex shrink-0 flex-wrap justify-end gap-1">
-                          {timeframeTick(
-                            s.direction === "long" ? "BW" : "AW",
-                            "text-lime-400",
-                            s.weeklyStreakBars,
-                            "week",
-                            "Weekly streak"
-                          )}
-                          {timeframeTick(
-                            s.direction === "long" ? "BD" : "AD",
-                            "text-fuchsia-400",
-                            s.dailyStreakBars,
-                            "day",
-                            "Daily streak"
-                          )}
-                          {timeframeTick(
-                            s.direction === "long" ? "B4H" : "A4H",
-                            "text-sky-400",
-                            s.fourHourStreakBars,
-                            "4H bar",
-                            "4H streak"
-                          )}
-                          {volumeAccumulationTick(s)}
-                        </span>
+                      <p className="text-xs font-medium">{s.symbol}</p>
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {timeframeTick(
+                          s.direction === "long" ? "BW" : "AW",
+                          "text-lime-400",
+                          s.weeklyStreakBars,
+                          "week",
+                          "Weekly streak"
+                        )}
+                        {timeframeTick(
+                          s.direction === "long" ? "BD" : "AD",
+                          "text-fuchsia-400",
+                          s.dailyStreakBars,
+                          "day",
+                          "Daily streak"
+                        )}
+                        {timeframeTick(
+                          s.direction === "long" ? "B4H" : "A4H",
+                          "text-sky-400",
+                          s.fourHourStreakBars,
+                          "4H bar",
+                          "4H streak"
+                        )}
+                        {volumeAccumulationTick(s)}
                       </div>
                       <p className={`text-[10px] font-semibold uppercase ${s.direction === "short" ? "text-danger" : "text-accent"}`}>
                         {s.direction === "short" ? "Short" : "Long"}
