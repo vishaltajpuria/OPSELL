@@ -24,7 +24,34 @@ function dateOnly(iso: string): string {
 function isCurrentShape(s: unknown): s is StoredStrategy3Signal {
   if (typeof s !== "object" || s === null) return false;
   const r = s as Record<string, unknown>;
-  return typeof r.symbol === "string" && (r.direction === "long" || r.direction === "short") && typeof r.entryPrice === "number";
+  return (
+    typeof r.symbol === "string" &&
+    (r.direction === "long" || r.direction === "short") &&
+    typeof r.entryPrice === "number" &&
+    typeof r.weeklyStreakBars === "number" &&
+    typeof r.dailyStreakBars === "number" &&
+    typeof r.fourHourStreakBars === "number"
+  );
+}
+
+// One tick per timeframe, always shown (every stock on this tab satisfies
+// all three by definition — that's the gate itself) — labeled BW/BD/B4H
+// for longs ("below" the line) and AW/AD/A4H for shorts ("above"), with
+// the streak length appended. Same colors Strategy Tab 2 already uses for
+// the equivalent (optional, there) ticks: lime for weekly, fuchsia for
+// daily, sky-blue for 4H.
+function timeframeTick(label: string, colorClass: string, bars: number, unit: string, title: string) {
+  return (
+    <span className={`text-[9px] font-semibold uppercase ${colorClass}`} title={`${title}: ${bars} ${unit}${bars === 1 ? "" : "s"}`}>
+      {label} {bars}
+    </span>
+  );
+}
+
+function bidAskColorClass(percent: number): string {
+  if (percent <= 3) return "text-accent";
+  if (percent <= 7) return "text-amber-400";
+  return "text-danger";
 }
 
 // Whale emoji tick — "whales accumulating" per the request — shown when
@@ -46,20 +73,27 @@ function volumeAccumulationTick(s: StoredStrategy3Signal) {
   );
 }
 
-function bidAskColorClass(percent: number): string {
-  if (percent <= 3) return "text-accent";
-  if (percent <= 7) return "text-amber-400";
-  return "text-danger";
-}
-
-// Headline metric first: a confirmed, stronger volume-accumulation read
-// ranks higher within its own Long/Short list. Unconfirmed or unresolved
-// (no futures data yet) sits at the bottom, same "missing data never
-// helps" treatment used throughout app/strategy2/page.tsx's own ranking —
-// not a weighted blend, just this one ordering, since no ranking scheme
-// was requested for this tab.
-function sortByVolumeAccumulation(signals: StoredStrategy3Signal[]): StoredStrategy3Signal[] {
-  return [...signals].sort((a, b) => (b.volumeAccumulation?.ratio ?? 0) - (a.volumeAccumulation?.ratio ?? 0));
+/**
+ * Ranks by streak length, weekly first, then daily, then 4H — per the
+ * request: "a stock which has been below weekly supertrend max will show
+ * on top for long positions, after that daily and 4H will be given
+ * importance" (shorts work the same way, just on their own ABOVE
+ * streaks — the fields hold the same streak-length numbers either way,
+ * only the tick LABEL differs by direction). Each is a hard priority
+ * level, not a weighted blend: a longer weekly streak always wins
+ * regardless of daily/4H, matching "max" in the request rather than
+ * averaging the three together. The confirmed volume-accumulation ratio
+ * only breaks a remaining tie after all three timeframes match exactly —
+ * a minor addition on top of the three explicitly requested criteria, not
+ * a replacement for any of them.
+ */
+function sortByStreaks(signals: StoredStrategy3Signal[]): StoredStrategy3Signal[] {
+  return [...signals].sort((a, b) => {
+    if (b.weeklyStreakBars !== a.weeklyStreakBars) return b.weeklyStreakBars - a.weeklyStreakBars;
+    if (b.dailyStreakBars !== a.dailyStreakBars) return b.dailyStreakBars - a.dailyStreakBars;
+    if (b.fourHourStreakBars !== a.fourHourStreakBars) return b.fourHourStreakBars - a.fourHourStreakBars;
+    return (b.volumeAccumulation?.ratio ?? 0) - (a.volumeAccumulation?.ratio ?? 0);
+  });
 }
 
 export default async function Strategy3Page() {
@@ -74,18 +108,20 @@ export default async function Strategy3Page() {
   }
 
   const validSignals = (latest?.signals ?? []).filter(isCurrentShape);
-  const longSignals = sortByVolumeAccumulation(validSignals.filter((s) => s.direction === "long"));
-  const shortSignals = sortByVolumeAccumulation(validSignals.filter((s) => s.direction === "short"));
+  const longSignals = sortByStreaks(validSignals.filter((s) => s.direction === "long"));
+  const shortSignals = sortByStreaks(validSignals.filter((s) => s.direction === "short"));
 
   return (
     <main className="px-4 pt-6">
       <h1 className="text-xl font-semibold">Strategy Tab 3</h1>
       <p className="mt-1 text-sm text-muted">
         Tracks every F&amp;O stock whose Supertrend trend agrees on the weekly, daily, AND 4H chart at once — below
-        all three for longs, above all three for shorts — regardless of WaveTrend. Both the nearest gap up and gap
-        down are shown either way, and 🐋 flags a stock whose own futures contract has seen a recent few-day volume
-        buildup at least double its 3-month average. The Supertrend + SMA crossover strategy and Strategy Tab 2's WT
-        gate play no part here.
+        all three for longs (BW/BD/B4H), above all three for shorts (AW/AD/A4H), regardless of WaveTrend. Each tick
+        shows how many bars that timeframe's trend has held; ranked by streak length, weekly first, then daily, then
+        4H — a stock that's been below (or above) the longest on the weekly chart sits on top. Both the nearest gap
+        up and gap down are shown either way, and 🐋 flags a stock whose own futures contract has seen a recent
+        few-day volume buildup at least double its 3-month average. The Supertrend + SMA crossover strategy and
+        Strategy Tab 2's WT gate play no part here.
       </p>
 
       <div className="mt-4">
@@ -142,7 +178,30 @@ export default async function Strategy3Page() {
                     <li key={`${s.symbol}-${i}`} className="rounded-lg border border-border bg-surface p-2.5">
                       <div className="flex items-center justify-between gap-1">
                         <p className="truncate text-xs font-medium">{s.symbol}</p>
-                        <span className="flex shrink-0 gap-1">{volumeAccumulationTick(s)}</span>
+                        <span className="flex shrink-0 flex-wrap justify-end gap-1">
+                          {timeframeTick(
+                            s.direction === "long" ? "BW" : "AW",
+                            "text-lime-400",
+                            s.weeklyStreakBars,
+                            "week",
+                            "Weekly streak"
+                          )}
+                          {timeframeTick(
+                            s.direction === "long" ? "BD" : "AD",
+                            "text-fuchsia-400",
+                            s.dailyStreakBars,
+                            "day",
+                            "Daily streak"
+                          )}
+                          {timeframeTick(
+                            s.direction === "long" ? "B4H" : "A4H",
+                            "text-sky-400",
+                            s.fourHourStreakBars,
+                            "4H bar",
+                            "4H streak"
+                          )}
+                          {volumeAccumulationTick(s)}
+                        </span>
                       </div>
                       <p className={`text-[10px] font-semibold uppercase ${s.direction === "short" ? "text-danger" : "text-accent"}`}>
                         {s.direction === "short" ? "Short" : "Long"}
