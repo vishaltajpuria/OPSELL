@@ -3,7 +3,7 @@ import { saveStrategy3Batch, BATCH_IDS, type BatchId, type StoredStrategy3Signal
 import { listFnoStocks, getNearMonthFutures, type FnoStock, type NearMonthFuture } from "@/lib/instruments";
 import { getEquityToken } from "@/lib/nseInstruments";
 import { detectStrategy3Signal } from "@/lib/strategy3";
-import { getFourHourSupertrendTrend } from "@/lib/fourHourSupertrend";
+import { getFourHourSupertrendStreak } from "@/lib/fourHourSupertrend";
 import { resolveAtmOption } from "@/lib/atmOption";
 import { checkFuturesVolumeAccumulation } from "@/lib/futuresVolume";
 import { batchQuote } from "@/lib/quoteBatch";
@@ -119,9 +119,9 @@ export async function runStrategy3(accessToken: string, batchId: BatchId): Promi
       const dailyCandles = patchTodayCandle(rawDaily, liveQuotes[`NSE:${symbol}`]);
 
       const hourlyCandles = await getHistoricalCandles(token, "60minute", fromHourly, to, accessToken);
-      const fourHourTrend = getFourHourSupertrendTrend(hourlyCandles);
+      const fourHourStreak = getFourHourSupertrendStreak(hourlyCandles);
 
-      const signal = detectStrategy3Signal(dailyCandles, fourHourTrend);
+      const signal = detectStrategy3Signal(dailyCandles, fourHourStreak);
       if (!signal) return;
 
       const atmOption = await resolveAtmOption(symbol, signal.entryPrice, signal.direction, accessToken).catch((err) => {

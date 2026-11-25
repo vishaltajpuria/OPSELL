@@ -89,6 +89,30 @@ export function computeSupertrend(candles: Candle[], period: number, multiplier:
   return points;
 }
 
+export type SupertrendStreak = { trend: "up" | "down"; bars: number };
+
+/**
+ * How many trailing bars, ending at the latest, share the latest bar's own
+ * trend — the length of the CURRENT unbroken trend, not a lookback window.
+ * A bar whose own value is still NaN (not yet warmed up) always stops the
+ * count, even if its placeholder trend happens to match (computeSupertrend
+ * pushes {value: NaN, trend: "up"} for every unwarmed bar, which isn't a
+ * real reading). Returns null when the LATEST bar itself isn't warmed up,
+ * same "don't guess" reasoning as every Supertrend read in this app.
+ */
+export function supertrendStreak(points: SupertrendPoint[]): SupertrendStreak | null {
+  const last = points[points.length - 1];
+  if (!last || Number.isNaN(last.value)) return null;
+
+  let bars = 0;
+  for (let i = points.length - 1; i >= 0; i--) {
+    const p = points[i];
+    if (Number.isNaN(p.value) || p.trend !== last.trend) break;
+    bars++;
+  }
+  return { trend: last.trend, bars };
+}
+
 // Plain SMA over any numeric series, tolerant of leading NaN gaps (e.g. an
 // indicator series like RSI that isn't valid until its own warm-up period
 // has passed) — a window containing any NaN stays NaN rather than
